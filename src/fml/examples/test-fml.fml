@@ -1,0 +1,85 @@
+<!-- src/pages/basic.fml -->
+<!-- Basic FML Example - Phase 1 -->
+
+<main class="dashboard-layout" style="font-family: system-ui, -apple-system, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: 1fr 3fr; gap: 30px; align-items: start;">
+
+  <!-- Sidebar -->
+  <aside aria-label="User Sidebar" style="background: #f8fafc; padding: 24px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); sticky; top: 20px;">
+    <Header title="User Profile" />
+
+    <div class="user-card" style="display: flex; align-items: center; gap: 16px; margin: 16px 0;">
+      <img 
+        src={user.avatar} 
+        alt="Profile picture of {user.name}" 
+        style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #4f46e5;"
+      />
+      <div>
+        <h2 style="margin: 0; font-size: 1.25rem; color: #1e293b;">{user.name || 'Anonymous'}</h2>
+        <p style="margin: 4px 0 0 0; color: #64748b; font-size: 0.875rem;">{user.role || 'User'}</p>
+      </div>
+    </div>
+
+    <Separator />
+
+    <nav aria-label="Dashboard Navigation" style="margin-top: 16px;">
+      <ul style="list-style: none; padding: 0; margin: 0;">
+        <li style="margin-bottom: 12px;"><a href="/dashboard" style="color: #4f46e5; text-decoration: none;">📊 Dashboard</a></li>
+        <li style="margin-bottom: 12px;"><a href="/posts" style="color: #334155;">📝 Posts</a></li>
+        <li style="margin-bottom: 12px;"><a href="/settings" style="color: #334155;">⚙️ Settings</a></li>
+        <li><a href="/logout" style="color: #dc2626;">🚪 Logout</a></li>
+      </ul>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <div class="main-content">
+    <section aria-labelledby="dashboard-title">
+      <h1 id="dashboard-title" style="color: #1e293b; margin-top: 0;">Your Dashboard, {user.name.split(' ')[0]}!</h1>
+      <p style="color: #64748b; margin-bottom: 24px;">Track your performance and engagement.</p>
+
+      <!-- Stats Grid -->
+      <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px;">
+        <Card type="stat" style="text-align: center; padding: 20px; background: white; border-left: 4px solid #4f46e5;">
+          <div style="font-size: 1.75rem; font-weight: bold; color: #4f46e5;">{stats.posts || 0}</div>
+          <div style="color: #64748b;">Posts</div>
+        </Card>
+
+        <Card type="stat" style="text-align: center; padding: 20px; background: white; border-left: 4px solid #10b981;">
+          <div style="font-size: 1.75rem; font-weight: bold; color: #10b981;">{stats.followers || 0}</div>
+          <div style="color: #64748b;">Followers</div>
+        </Card>
+
+        <Card type="stat" style="text-align: center; padding: 20px; background: white; border-left: 4px solid #f59e0b;">
+          <div style="font-size: 1.75rem; font-weight: bold; color: #f59e0b;">{stats.likes || 0}</div>
+          <div style="color: #64748b;">Likes</div>
+        </Card>
+      </div>
+
+      <!-- Welcome Card -->
+      <Card type="info" style="background: #eff6ff; border: 1px solid #bfdbfe; padding: 24px; border-radius: 12px;">
+        <h3 style="margin: 0 0 12px 0; color: #1e40af;">🚀 Getting Started</h3>
+        <p style="margin: 0 0 16px 0; color: #334155;">
+          Welcome to your new <strong>FML-powered application</strong>! You're using a lightweight, secure, JSX-like templating engine built in vanilla JS.
+        </p>
+        <Button variant="primary" size="large" onClick={actions.startTour}>
+          Take a Tour
+        </Button>
+      </Card>
+    </section>
+
+    <!-- Activity Feed (Example of dynamic content) -->
+    <section aria-labelledby="activity-title" style="margin-top: 32px;">
+      <h2 id="activity-title" style="color: #1e293b;">Recent Activity</h2>
+      <ul style="list-style: none; padding: 0; margin: 0;">
+        {#each activities as activity}
+          <li style="padding: 12px 0; border-bottom: 1px solid #e2e8f0;">
+            <strong>{activity.action}</strong> on {activity.time}
+          </li>
+        {/each}
+      </ul>
+    </section>
+  </div>
+
+  <!-- Footer -->
+  <Footer style="grid-column: span 2; text-align: center; margin-top: 40px; color: #64748b; font-size: 0.875rem;" />
+</main>

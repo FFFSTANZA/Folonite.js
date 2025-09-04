@@ -1,410 +1,313 @@
-// examples/demo-server.js
-// Simple FML Demo Server - Phase 1 Complete
+// src/fml/examples/demo-server.js
+// FML Phase 1 Demo Server - Fully Working
 
 import express from 'express';
 import path from 'path';
-import { processFML } from '../index.js';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+// Resolve __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Import FML modules with error handling
+let processFML = null;
+
+async function loadFML() {
+  try {
+    const fmlModule = await import('../index.js');
+    processFML = fmlModule.processFML;
+    console.log('✅ FML loaded successfully');
+  } catch (error) {
+    console.error('❌ Failed to load FML:', error);
+    console.log('Make sure all FML files are in place:');
+    console.log('  - src/fml/index.js');
+    console.log('  - src/fml/parser/parser.js');
+    console.log('  - src/fml/compiler/compiler.js');
+    console.log('  - src/fml/renderer/server.js');
+    console.log('  - src/fml/utils/escape.js');
+    process.exit(1);
+  }
+}
+
+// Load FML file from disk
+function loadFMLFile(filename) {
+  const filePath = path.join(__dirname, '..', '..', 'pages', filename);
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`FML file not found: ${filePath}`);
+  }
+  return fs.readFileSync(filePath, 'utf-8');
+}
 
 const app = express();
 const PORT = 3001;
 
-console.log('\n🚀 Starting FML Demo Server...\n');
-
 // Simple demo components
 const components = {
-  Layout: ({ title, children }) => `
+  Header: ({ title }) => `
+    <header style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-align: center; padding: 40px 20px; margin-bottom: 30px;">
+      <h1>${title || 'FML Demo'}</h1>
+      <p>Phase 1 Complete - Lightweight JSX Alternative</p>
+    </header>
+  `,
+
+  Footer: () => `
+    <footer style="background: #f8f9fa; padding: 20px; text-align: center; margin-top: 30px; border-top: 1px solid #dee2e6;">
+      <p>&copy; 2024 Folonite.js - FML Phase 1</p>
+    </footer>
+  `,
+
+  Card: ({ type, children }) => {
+    const border = type === 'info' ? '1px solid #3b82f6' : 'none';
+    return `
+      <div style="background: white; padding: 25px; margin: 20px 0; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border: ${border};">
+        ${children || ''}
+      </div>
+    `;
+  },
+
+  UserCard: ({ name, avatar, status }) => `
+    <div style="display: flex; align-items: center; gap: 15px; margin: 15px 0;">
+      <img src="${avatar}" alt="${name}" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover;">
+      <div>
+        <h4 style="margin: 0;">${name}</h4>
+        <small style="color: #6b7280;">
+          Status: <span style="color: ${status === 'online' ? '#10b981' : '#6b7280'};">●</span> ${status}
+        </small>
+      </div>
+    </div>
+  `,
+
+  Button: ({ variant, size, children }) => {
+    const variants = {
+      primary: 'background: #4f46e5; color: white;',
+      secondary: 'background: #6b7280; color: white;'
+    };
+    const sizes = {
+      small: 'padding: 8px 12px; font-size: 0.875rem;',
+      large: 'padding: 12px 24px; font-size: 1.125rem;'
+    };
+    return `
+      <button style="${variants[variant] || ''} ${sizes[size] || ''} border: none; border-radius: 6px; cursor: pointer;">
+        ${children || ''}
+      </button>
+    `;
+  },
+
+  Separator: () => `
+    <hr style="border: 1px solid #e5e7eb; margin: 30px 0;">
+  `
+};
+
+// Test route to verify FML works
+app.get('/test-fml', async (req, res) => {
+  if (!processFML) {
+    return res.status(500).send('<h1>FML not loaded</h1><p>Check server console for errors</p>');
+  }
+
+  try {
+    const fmlContent = `
+      <main style="font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
+        <Header title="FML Test Success" />
+        
+        <Card type="info">
+          <p>FML is working correctly in your Folonite.js project!</p>
+          
+          <div style="background: #d1fae5; border: 1px solid #a7f3d0; color: #065f46; padding: 15px; border-radius: 8px; margin: 15px 0;">
+            <strong>✅ Test Results:</strong>
+            <ul style="margin: 10px 0;">
+              <li>FML Parser: Working</li>
+              <li>FML Compiler: Working</li>
+              <li>Component System: Working</li>
+              <li>Server Rendering: Working</li>
+            </ul>
+          </div>
+
+          <h4>Dynamic Content Test:</h4>
+          <p>Current time: <strong>{currentTime}</strong></p>
+          <p>Random number: <strong>{randomNum}</strong></p>
+          <p>User greeting: <strong>Hello, {user.name}!</strong></p>
+        </Card>
+
+        <Card>
+          <ol>
+            <li>Create <code>.fml</code> files in your <code>src/pages/</code> directory</li>
+            <li>Use components with <code><ComponentName prop="value" /></code> syntax</li>
+            <li>Add dynamic content with <code>{variable}</code> interpolation</li>
+            <li>Visit your pages - FML will be used automatically!</li>
+          </ol>
+          
+          <p><a href="/basic-example" style="color: #4f46e5;">→ See a basic example</a></p>
+        </Card>
+        
+        <Footer />
+      </main>
+    `;
+
+    const html = await processFML(fmlContent, {
+      mode: 'server',
+      props: {
+        currentTime: new Date().toLocaleString(),
+        randomNum: Math.floor(Math.random() * 1000),
+        user: { name: 'Developer' }
+      },
+      components,
+      debug: true
+    });
+
+    res.send(html);
+  } catch (error) {
+    console.error('FML Test Error:', error);
+    res.status(500).send(`
+      <div style="font-family: system-ui; padding: 40px; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #dc2626;">❌ FML Test Failed</h1>
+        <p><strong>Error:</strong> ${error.message}</p>
+        <div style="background: #fef2f2; border: 1px solid #fecaca; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <strong>Troubleshooting:</strong>
+          <ol>
+            <li>Check that all FML files exist in the correct locations</li>
+            <li>Verify imports are working properly</li>
+            <li>Look at the server console for detailed error messages</li>
+          </ol>
+        </div>
+        <a href="/" style="color: #4f46e5;">← Back to home</a>
+      </div>
+    `);
+  }
+});
+
+// Basic example route – loads from file
+app.get('/basic-example', async (req, res) => {
+  if (!processFML) {
+    return res.status(500).send('<h1>FML not loaded</h1>');
+  }
+
+  try {
+    const fmlContent = loadFMLFile('basic.fml');
+    const html = await processFML(fmlContent, {
+      mode: 'server',
+      props: {
+        user: {
+          name: 'Alice Johnson',
+          email: 'alice@example.com',
+          role: 'Full Stack Developer',
+          avatar: 'https://i.pravatar.cc/150?u=alice'
+        },
+        stats: {
+          posts: 42,
+          followers: 1337,
+          likes: 2890
+        }
+      },
+      components,
+      debug: true
+    });
+
+    res.send(html);
+  } catch (error) {
+    res.status(500).send(`
+      <div style="font-family: system-ui; padding: 40px; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #dc2626;">❌ Error Loading Page</h1>
+        <p><strong>${error.message}</strong></p>
+        <a href="/" style="color: #4f46e5;">← Back to home</a>
+      </div>
+    `);
+  }
+});
+
+// Home route
+app.get('/', (req, res) => {
+  res.send(`
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${title || 'FML Demo'}</title>
+      <title>FML Demo Server</title>
       <style>
-        body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: #f5f7fa; }
-        .container { max-width: 800px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-align: center; padding: 60px 20px; margin: -20px -20px 30px -20px; }
-        .card { background: white; padding: 25px; margin: 20px 0; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .nav { background: white; padding: 20px; margin: -20px -20px 30px -20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .nav a { margin-right: 20px; text-decoration: none; color: #4f46e5; font-weight: 500; }
-        .nav a:hover { color: #7c3aed; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }
-        .stat { background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #e2e8f0; }
-        .stat-value { font-size: 2em; font-weight: bold; color: #4f46e5; }
-        .code { background: #1f2937; color: #f9fafb; padding: 20px; border-radius: 8px; overflow-x: auto; }
-        .success { background: #ecfdf5; border: 1px solid #bbf7d0; color: #166534; padding: 15px; border-radius: 8px; }
-        .error { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 15px; border-radius: 8px; }
-        pre { margin: 0; }
+        body { 
+          font-family: system-ui, sans-serif; 
+          max-width: 600px; 
+          margin: 50px auto; 
+          padding: 20px; 
+          background: #f8f9fa; 
+          line-height: 1.6;
+        }
+        .card { 
+          background: white; 
+          padding: 30px; 
+          border-radius: 12px; 
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+          margin: 20px 0; 
+        }
+        .button { 
+          display: inline-block; 
+          padding: 12px 24px; 
+          background: #4f46e5; 
+          color: white; 
+          text-decoration: none; 
+          border-radius: 8px; 
+          margin: 10px 10px 10px 0; 
+          font-weight: 500;
+        }
+        .button:hover { background: #4338ca; }
+        .success { 
+          background: #d1fae5; 
+          border: 1px solid #a7f3d0; 
+          color: #065f46; 
+          padding: 15px; 
+          border-radius: 8px; 
+          margin: 20px 0;
+        }
+        code {
+          background: #f1f5f9;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: monospace;
+        }
       </style>
     </head>
     <body>
-      <div class="container">
-        ${children || ''}
+      <div class="card">
+        <h1>🚀 FML Demo Server</h1>
+        <p>Welcome to the FML (Folonite Markup Language) demonstration server!</p>
+        
+        <div class="success">
+          <strong>✅ Server Running:</strong> FML Phase 1 is ready for testing
+        </div>
+        
+        <h3>Test Routes:</h3>
+        <a href="/test-fml" class="button">🧪 FML Test</a>
+        <a href="/basic-example" class="button">📝 Basic Example</a>
+        
+        <h3>Integration Instructions:</h3>
+        <ol>
+          <li>Copy the FML files to your Folonite.js project</li>
+          <li>Update your <code>renderPage.js</code> with the fixed version</li>
+          <li>Create <code>.fml</code> files in <code>src/pages/</code></li>
+          <li>Visit your pages - FML will be used automatically!</li>
+        </ol>
+        
+        <p><strong>Note:</strong> This is a standalone demo server. The main integration happens in your <code>server.js</code> file.</p>
       </div>
     </body>
     </html>
-  `,
-
-  Header: ({ title, subtitle }) => `
-    <div class="header">
-      <h1>${title}</h1>
-      ${subtitle ? `<p style="margin-top: 10px; opacity: 0.9;">${subtitle}</p>` : ''}
-    </div>
-  `,
-
-  Nav: () => `
-    <nav class="nav">
-      <a href="/">🏠 Home</a>
-      <a href="/demo">🎮 Demo</a>
-      <a href="/test">🧪 Test</a>
-      <a href="/stats">📊 Stats</a>
-    </nav>
-  `,
-
-  Card: ({ title, children }) => `
-    <div class="card">
-      ${title ? `<h3 style="margin-top: 0; color: #374151;">${title}</h3>` : ''}
-      ${children || ''}
-    </div>
-  `,
-
-  UserCard: ({ name, email, role }) => `
-    <div class="card" style="border-left: 4px solid #4f46e5;">
-      <h3 style="margin-top: 0;">👤 ${name}</h3>
-      <p><strong>Email:</strong> ${email}</p>
-      <p><strong>Role:</strong> ${role}</p>
-      <div style="background: #f8fafc; padding: 10px; border-radius: 6px; margin-top: 15px;">
-        <small>This component demonstrates dynamic prop usage in FML</small>
-      </div>
-    </div>
-  `,
-
-  CodeBlock: ({ code, language = 'fml' }) => `
-    <div class="code">
-      <div style="color: #9ca3af; font-size: 12px; margin-bottom: 10px;">${language.toUpperCase()}</div>
-      <pre><code>${code.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>
-    </div>
-  `,
-
-  Stats: ({ renders, uptime, memory }) => `
-    <div class="stats">
-      <div class="stat">
-        <div class="stat-value">${renders}</div>
-        <div>Renders</div>
-      </div>
-      <div class="stat">
-        <div class="stat-value">${uptime}s</div>
-        <div>Uptime</div>
-      </div>
-      <div class="stat">
-        <div class="stat-value">${memory}MB</div>
-        <div>Memory</div>
-      </div>
-    </div>
-  `
-};
-
-// Demo data
-const demoData = {
-  user: {
-    name: 'Jane Developer',
-    email: 'jane@folonite.dev',
-    role: 'FML Early Adopter'
-  },
-  stats: {
-    renders: 0,
-    startTime: Date.now()
-  }
-};
-
-// Routes
-app.get('/', async (req, res) => {
-  try {
-    const fml = `
-      <Layout title="FML Demo - Home">
-        <Header 
-          title="🚀 FML Demo" 
-          subtitle="Phase 1 Complete - Lightweight JSX Alternative" 
-        />
-        <Nav />
-        
-        <Card title="Welcome to FML!">
-          <p>FML (Folonite Markup Language) is a lightweight template engine that's simpler than JSX but just as powerful.</p>
-          
-          <div class="success">
-            <strong>✅ Phase 1 Complete!</strong> All core features are ready for production use.
-          </div>
-          
-          <h4>🎯 Key Features:</h4>
-          <ul>
-            <li>HTML-like syntax (easier than JSX)</li>
-            <li>Component composition with dynamic props</li>
-            <li>Server-side rendering built-in</li>
-            <li>XSS protection by default</li>
-            <li>Only ~10KB minified</li>
-            <li>Zero configuration required</li>
-          </ul>
-        </Card>
-
-        <Card title="Quick Example">
-          <CodeBlock code={\`<div class="welcome">
-  <Header {title: "Hello World"} />
-  <p>Welcome, {user.name}!</p>
-  <UserCard {name: user.name, email: user.email, role: user.role} />
-</div>\`} />
-        </Card>
-
-        <Card title="🚀 Getting Started">
-          <ol>
-            <li>Create a <code>.fml</code> file in your pages directory</li>
-            <li>Use HTML-like syntax with <code>{}</code> for dynamic content</li>
-            <li>Pass props to components with <code>{prop: value}</code> syntax</li>
-            <li>That's it! FML handles the rest automatically</li>
-          </ol>
-        </Card>
-      </Layout>
-    `;
-
-    const html = await processFML(fml, {
-      mode: 'server',
-      props: { user: demoData.user },
-      components
-    });
-
-    demoData.stats.renders++;
-    res.send(html);
-  } catch (error) {
-    res.status(500).send(`<h1>Error</h1><p>${error.message}</p>`);
-  }
-});
-
-app.get('/demo', async (req, res) => {
-  try {
-    const fml = `
-      <Layout title="FML Demo - Interactive Examples">
-        <Header title="🎮 Interactive Demo" subtitle="See FML components in action" />
-        <Nav />
-        
-        <Card title="User Profile Component">
-          <p>This component uses dynamic props passed from the server:</p>
-          <UserCard 
-            {name: user.name, email: user.email, role: user.role} 
-          />
-        </Card>
-
-        <Card title="Dynamic Content Interpolation">
-          <p>Hello, <strong>{user.name}</strong>! 👋</p>
-          <p>Your email: <em>{user.email}</em></p>
-          <p>Current time: {currentTime}</p>
-          <p>You are user #{userId} in our system</p>
-        </Card>
-
-        <Card title="Component Composition">
-          <p>FML components can be nested and composed together:</p>
-          <Card title="📦 Nested Card">
-            <p>This card is nested inside another card component!</p>
-            <div class="success">
-              <strong>Nested Success Message:</strong> Component composition works perfectly!
-            </div>
-          </Card>
-        </Card>
-
-        <Card title="Code Example">
-          <p>Here's the FML code that generates this page:</p>
-          <CodeBlock code={\`<UserCard 
-  {name: user.name, email: user.email, role: user.role} 
-/>
-
-<p>Hello, {user.name}!</p>
-<p>Current time: {currentTime}</p>\`} />
-        </Card>
-      </Layout>
-    `;
-
-    const html = await processFML(fml, {
-      mode: 'server',
-      props: { 
-        user: demoData.user,
-        currentTime: new Date().toLocaleString(),
-        userId: Math.floor(Math.random() * 1000)
-      },
-      components
-    });
-
-    demoData.stats.renders++;
-    res.send(html);
-  } catch (error) {
-    res.status(500).send(`<h1>Error</h1><p>${error.message}</p>`);
-  }
-});
-
-app.get('/test', async (req, res) => {
-  try {
-    const fml = `
-      <Layout title="FML Demo - Test Page">
-        <Header title="🧪 Test Page" subtitle="Testing FML features and components" />
-        <Nav />
-        
-        <Card title="Component Testing">
-          <p>Testing various FML features...</p>
-          
-          <div class="success">
-            <strong>✅ All tests passed!</strong> FML is working correctly.
-          </div>
-          
-          <h4>Test Results:</h4>
-          <ul>
-            <li>✅ Component rendering</li>
-            <li>✅ Props passing</li>
-            <li>✅ Text interpolation</li>
-            <li>✅ HTML escaping</li>
-            <li>✅ Nested components</li>
-          </ul>
-        </Card>
-
-        <Card title="Dynamic Data Test">
-          <p>Random number: <strong>{randomNumber}</strong></p>
-          <p>Server time: <strong>{serverTime}</strong></p>
-          <p>Environment: <strong>{environment}</strong></p>
-        </Card>
-
-        <Card title="Security Test">
-          <p>This should be safely escaped: {potentialXSS}</p>
-          <div class="success">
-            If you see the raw HTML above instead of an alert, XSS protection is working! ✅
-          </div>
-        </Card>
-      </Layout>
-    `;
-
-    const html = await processFML(fml, {
-      mode: 'server',
-      props: {
-        randomNumber: Math.floor(Math.random() * 1000),
-        serverTime: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development',
-        potentialXSS: '<script>alert("XSS")</script>'
-      },
-      components
-    });
-
-    demoData.stats.renders++;
-    res.send(html);
-  } catch (error) {
-    res.status(500).send(`<h1>Error</h1><p>${error.message}</p>`);
-  }
-});
-
-app.get('/stats', async (req, res) => {
-  try {
-    const uptime = Math.floor((Date.now() - demoData.stats.startTime) / 1000);
-    const memory = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-
-    const fml = `
-      <Layout title="FML Demo - Statistics">
-        <Header title="📊 Performance Stats" subtitle="FML runtime metrics" />
-        <Nav />
-        
-        <Card title="Server Statistics">
-          <Stats {renders: renders, uptime: uptime, memory: memory} />
-        </Card>
-
-        <Card title="FML Performance">
-          <div class="success">
-            <strong>🚀 Excellent Performance!</strong> FML is running smoothly.
-          </div>
-          
-          <h4>Performance Highlights:</h4>
-          <ul>
-            <li>⚡ Render time: &lt;2ms average</li>
-            <li>💾 Memory usage: {memory}MB</li>
-            <li>📦 Bundle size: ~10KB minified</li>
-            <li>🔄 Total renders: {renders}</li>
-            <li>⏱️ Uptime: {uptime} seconds</li>
-          </ul>
-        </Card>
-
-        <Card title="Phase 1 Status">
-          <div class="success">
-            <strong>✅ Phase 1 Complete!</strong>
-          </div>
-          
-          <h4>Completed Features:</h4>
-          <ul>
-            <li>✅ Core parser (lexer + AST)</li>
-            <li>✅ Compiler (AST to HTML)</li>
-            <li>✅ Server renderer</li>
-            <li>✅ Component system</li>
-            <li>✅ Props & interpolation</li>
-            <li>✅ Security (XSS protection)</li>
-            <li>✅ Error handling</li>
-            <li>✅ Development tools</li>
-          </ul>
-        </Card>
-      </Layout>
-    `;
-
-    const html = await processFML(fml, {
-      mode: 'server',
-      props: {
-        renders: demoData.stats.renders,
-        uptime: uptime,
-        memory: memory
-      },
-      components
-    });
-
-    demoData.stats.renders++;
-    res.send(html);
-  } catch (error) {
-    res.status(500).send(`<h1>Error</h1><p>${error.message}</p>`);
-  }
-});
-
-// 404 handler
-app.use((req, res) => {
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>404 - Not Found</title>
-      <style>
-        body { font-family: system-ui, sans-serif; text-align: center; padding: 50px; }
-        .container { max-width: 500px; margin: 0 auto; }
-        h1 { color: #dc2626; }
-        a { color: #4f46e5; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>404 - Page Not Found</h1>
-        <p>The page <strong>${req.path}</strong> doesn't exist.</p>
-        <p><a href="/">← Go back home</a></p>
-        
-        <h3>Available Pages:</h3>
-        <ul style="text-align: left;">
-          <li><a href="/">🏠 Home</a> - Introduction and overview</li>
-          <li><a href="/demo">🎮 Demo</a> - Interactive examples</li>
-          <li><a href="/test">🧪 Test</a> - Feature testing</li>
-          <li><a href="/stats">📊 Stats</a> - Performance metrics</li>
-        </ul>
-      </div>
-    </body>
-    </html>
-  `;
-  
-  res.status(404).send(html);
+  `);
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log('✅ FML Demo Server started successfully!');
-  console.log(`📍 Server running at: http://localhost:${PORT}`);
-  console.log('\n📚 Available routes:');
-  console.log('   🏠 http://localhost:3001/      - Home & Introduction');
-  console.log('   🎮 http://localhost:3001/demo  - Interactive Examples');
-  console.log('   🧪 http://localhost:3001/test  - Feature Testing');
-  console.log('   📊 http://localhost:3001/stats - Performance Stats');
-  console.log('\n🎉 Phase 1 Complete - FML is ready to use!');
-  console.log('🚀 Visit the URLs above to see FML in action\n');
-});
+async function startServer() {
+  await loadFML();
+  
+  app.listen(PORT, () => {
+    console.log('\n🚀 FML Demo Server Started!');
+    console.log(`📍 Visit: http://localhost:${PORT}`);
+    console.log('\n📚 Available routes:');
+    console.log(`   🏠 http://localhost:${PORT}/           - Home`);
+    console.log(`   🧪 http://localhost:${PORT}/test-fml   - FML Test`);
+    console.log(`   📝 http://localhost:${PORT}/basic-example - Basic Example`);
+    console.log('\n✅ FML Phase 1 is ready!\n');
+  });
+}
+
+startServer().catch(console.error);

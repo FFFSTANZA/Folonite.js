@@ -16,6 +16,48 @@ export const NodeType = {
 };
 
 /**
+ * Valid HTML5 tags (from MDN)
+ * Source: https://developer.mozilla.org/en-US/docs/Web/HTML/Element
+ */
+const VALID_HTML_TAGS = new Set([
+  // Document & Sectioning
+  'html', 'head', 'body', 'main', 'section', 'article', 'aside', 'nav', 'footer', 'header', 'hgroup',
+
+  // Headings
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+
+  // Text
+  'p', 'div', 'span', 'br', 'hr', 'pre', 'blockquote', 'ol', 'ul', 'li', 'dl', 'dt', 'dd',
+  'figure', 'figcaption', 'address', 'details', 'summary',
+
+  // Inline
+  'a', 'em', 'strong', 'small', 'mark', 'del', 'ins', 'sub', 'sup', 'code', 'var', 'samp', 'kbd',
+  'abbr', 'time', 'data', 'q', 'cite', 'dfn', 'i', 'b', 'u', 's', 'wbr',
+
+  // Embedded
+  'img', 'audio', 'video', 'canvas', 'svg', 'map', 'area', 'picture', 'source',
+
+  // Forms
+  'form', 'input', 'textarea', 'button', 'select', 'option', 'optgroup', 'label',
+  'fieldset', 'legend', 'datalist', 'output', 'progress', 'meter',
+
+  // Tables
+  'table', 'caption', 'colgroup', 'col', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th',
+
+  // Scripting
+  'script', 'noscript', 'template',
+
+  // Interactive
+  'details', 'dialog', 'summary',
+
+  // Web Components
+  'slot'
+]);
+
+// Obsolete tags that should warn in dev
+const OBSOLETE_TAGS = new Set(['center', 'font', 's', 'strike', 'big', 'tt', 'nobr', 'acronym', 'dir']);
+
+/**
  * FML Parser
  * Converts token stream into AST
  */
@@ -25,6 +67,7 @@ export class FMLParser {
     this.tokens = [];
     this.position = 0;
     this.current = null;
+    this.tagStack = []; // For better error messages
   }
 
   /**
@@ -91,7 +134,8 @@ export class FMLParser {
       case TokenType.EOF:
         return null;
       default:
-        this.advance(); // Skip invalid/unrecognized tokens
+        this.warn(`Unknown token type: ${this.current.type}`);
+        this.advance();
         return this.parseNode();
     }
   }
@@ -101,16 +145,30 @@ export class FMLParser {
    */
   parseElement() {
     const token = this.current;
-    this.advance();
+    const tagName = token.value.tagName;
+
+    // Validate HTML tag
+    if (this.debug && !VALID_HTML_TAGS.has(tagName.toLowerCase())) {
+      this.warn(`Unknown HTML tag: <${tagName}>`);
+    }
+
+    // Warn for obsolete tags
+    if (this.debug && OBSOLETE_TAGS.has(tagName.toLowerCase())) {
+      this.warn(`Obsolete tag used: <${tagName}> — avoid in new code`);
+    }
+
+    this.advance(); // Consume open tag
 
     const element = this.createNode(NodeType.ELEMENT, {
-      tagName: token.value.tagName,
+      tagName,
       attributes: this.parseAttributes(token.value.attributes),
       children: []
     });
 
+    this.tagStack.push(tagName);
+
     // Parse children until matching closing tag
-    while (!this.isAtEnd() && !this.isClosingTag(token.value.tagName)) {
+    while (!this.isAtEnd() && !this.isClosingTag(tagName)) {
       const child = this.parseNode();
       if (child) {
         element.children.push(child);
@@ -119,14 +177,15 @@ export class FMLParser {
 
     // Consume closing tag
     if (this.current && this.current.type === TokenType.TAG_CLOSE) {
-      if (this.current.value.tagName !== token.value.tagName) {
-        this.error(`Mismatched closing tag: expected </${token.value.tagName}>, got </${this.current.value.tagName}>`);
+      if (this.current.value.tagName !== tagName) {
+        this.error(`Mismatched closing tag: expected </${tagName}>, got </${this.current.value.tagName}>`);
       }
       this.advance();
     } else {
-      this.error(`Unclosed tag: <${token.value.tagName}>`);
+      this.error(`Unclosed tag: <${tagName}>`);
     }
 
+    this.tagStack.pop();
     return element;
   }
 
@@ -135,16 +194,20 @@ export class FMLParser {
    */
   parseComponent() {
     const token = this.current;
-    this.advance();
+    const name = token.value.tagName;
+
+    this.advance(); // Consume open tag
 
     const component = this.createNode(NodeType.COMPONENT, {
-      name: token.value.tagName,
+      name,
       props: this.parseAttributes(token.value.attributes),
       children: []
     });
 
+    this.tagStack.push(name);
+
     // Parse children until closing tag
-    while (!this.isAtEnd() && !this.isClosingTag(token.value.tagName)) {
+    while (!this.isAtEnd() && !this.isClosingTag(name)) {
       const child = this.parseNode();
       if (child) {
         component.children.push(child);
@@ -155,9 +218,10 @@ export class FMLParser {
     if (this.current && this.current.type === TokenType.TAG_CLOSE) {
       this.advance();
     } else {
-      this.error(`Unclosed component: <${token.value.tagName}>`);
+      this.error(`Unclosed component: <${name}>`);
     }
 
+    this.tagStack.pop();
     return component;
   }
 
@@ -166,12 +230,13 @@ export class FMLParser {
    */
   parseSelfClosingElement() {
     const token = this.current;
-    this.advance();
+    const tagName = token.value.tagName;
+    const isComponent = this.isComponentName(tagName);
 
-    const isComponent = this.isComponentName(token.value.tagName);
+    this.advance(); // Consume self-closing tag
 
     return this.createNode(isComponent ? NodeType.COMPONENT : NodeType.ELEMENT, {
-      [isComponent ? 'name' : 'tagName']: token.value.tagName,
+      [isComponent ? 'name' : 'tagName']: tagName,
       [isComponent ? 'props' : 'attributes']: this.parseAttributes(token.value.attributes),
       children: []
     });
@@ -208,20 +273,34 @@ export class FMLParser {
     const attributes = [];
 
     for (const attr of attributeTokens) {
-      if (attr.type === 'static') {
+      if (attr.type === TokenType.ATTRIBUTE_STATIC) {
+        const val = attr.value;
         attributes.push(
           this.createNode(NodeType.ATTRIBUTE, {
-            name: attr.name,
-            value: attr.value,
+            name: val.name,
+            value: val.value,
             dynamic: false
           })
         );
-      } else if (attr.type === 'dynamic') {
-        try {
-          const props = this.parseDynamicProps(attr.content);
-          attributes.push(...props);
-        } catch (error) {
-          this.error(`Invalid dynamic props: ${attr.content} → ${error.message}`);
+      } else if (attr.type === TokenType.ATTRIBUTE_DYNAMIC) {
+        const val = attr.value;
+        if (val.type === 'dynamic') {
+          // Single dynamic attribute: name={user.name}
+          attributes.push(
+            this.createNode(NodeType.ATTRIBUTE, {
+              name: val.name,
+              value: val.content,
+              dynamic: true
+            })
+          );
+        } else if (val.type === 'dynamic-object') {
+          // Object syntax: {prop: value, enabled: true}
+          try {
+            const props = this.parseDynamicProps(val.content);
+            attributes.push(...props);
+          } catch (error) {
+            this.error(`Invalid dynamic props: ${val.content} → ${error.message}`);
+          }
         }
       }
     }
@@ -355,6 +434,16 @@ export class FMLParser {
       ? `line ${this.current.line}, column ${this.current.column}`
       : 'end of input';
     throw new Error(`[FML Parse Error] ${message} at ${loc}`);
+  }
+
+  /**
+   * Log warning with location
+   */
+  warn(message) {
+    if (this.debug) {
+      const loc = this.current ? `(${this.current.line}:${this.current.column})` : '';
+      console.warn(`[FML Warning] ${message} ${loc}`);
+    }
   }
 }
 

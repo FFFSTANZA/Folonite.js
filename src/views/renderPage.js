@@ -5,17 +5,29 @@ import { pathToFileURL } from 'url';
 import fs from 'fs';
 import { components } from './registerComponents.js';
 
-// FML Integration
-import { processFML } from '../fml/index.js';
-import { validateFML } from '../fml/parser/validator.js';
-import { FMLParser } from '../fml/parser/parser.js';
-import { 
-  getCachedTemplate, 
-  cacheTemplate, 
-  generateCacheKey, 
-  fmlStats,
-  clearTemplateCache 
-} from '../fml/utils/helpers.js'; 
+// FML Integration - Fixed imports
+let processFML, validateFML, FMLParser, fmlStats;
+
+// Lazy load FML modules to avoid circular dependencies
+async function loadFMLModules() {
+  if (!processFML) {
+    try {
+      const fmlIndex = await import('../fml/index.js');
+      const fmlValidator = await import('../fml/parser/validator.js');
+      const fmlHelpers = await import('../fml/utils/helpers.js');
+      
+      processFML = fmlIndex.processFML;
+      validateFML = fmlValidator.validateFML;
+      FMLParser = fmlIndex.FMLParser;
+      fmlStats = fmlHelpers.fmlStats;
+      
+      console.log('✅ FML modules loaded successfully');
+    } catch (error) {
+      console.error('❌ Failed to load FML modules:', error);
+      throw error;
+    }
+  }
+}
 
 /**
  * Enhanced renderPage with automatic FML detection
@@ -29,6 +41,7 @@ export async function renderPage(pageName, options = {}) {
     
     if (fs.existsSync(fmlPath)) {
       // 🆕 FML Rendering Path
+      await loadFMLModules();
       return await renderFMLPage(fmlPath, pageName, options);
     } else if (fs.existsSync(jsPath)) {
       // 📄 Legacy JS Rendering Path (unchanged)
@@ -57,35 +70,23 @@ async function renderFMLPage(fmlPath, pageName, options = {}) {
       await validateFMLInDevelopment(fmlContent, pageName);
     }
     
-    // Check cache in production
-    let renderedContent;
-    if (process.env.NODE_ENV === 'production') {
-      const cacheKey = generateCacheKey(fmlContent, components);
-      const cached = getCachedTemplate(cacheKey);
-      
-      if (cached) {
-        fmlStats.incrementCacheHit();
-        renderedContent = cached.content;
-      } else {
-        fmlStats.incrementCacheMiss();
-        renderedContent = await processFMLContent(fmlContent, options);
-        cacheTemplate(cacheKey, { content: renderedContent, timestamp: Date.now() });
-      }
-    } else {
-      // Development - always fresh render
-      renderedContent = await processFMLContent(fmlContent, options);
-    }
+    // Process FML content
+    const renderedContent = await processFMLContent(fmlContent, options);
     
     // Track performance
     const renderTime = Date.now() - startTime;
-    fmlStats.incrementRender(renderTime);
+    if (fmlStats) {
+      fmlStats.incrementRender(renderTime);
+    }
     
     // Build final HTML with CSS
     const stylesheet = resolveStylesheetPath(pageName);
     return buildHtmlPage(pageName, renderedContent, stylesheet, 'fml');
     
   } catch (error) {
-    fmlStats.incrementError();
+    if (fmlStats) {
+      fmlStats.incrementError();
+    }
     console.error(`FML render error for "${pageName}":`, error);
     return buildErrorPage(pageName, `FML Error: ${error.message}`, 'fml');
   }
@@ -159,6 +160,7 @@ export function renderPageStream(pageName, options = {}) {
         
         if (fs.existsSync(fmlPath)) {
           // 🆕 FML Streaming
+          await loadFMLModules();
           await this.streamFMLPage(fmlPath, pageName, options);
         } else if (fs.existsSync(jsPath)) {
           // 📄 Legacy JS Streaming
@@ -259,7 +261,7 @@ function resolveStylesheetPath(pageName) {
 
 function buildHtmlPage(title, bodyContent, stylesheet, renderType = 'unknown') {
   const devMeta = process.env.NODE_ENV === 'development' 
-    ? `\n        <!-- Rendered with: ${renderType.toUpperCase()} -->\n        <!-- FML Stats: ${JSON.stringify(fmlStats.getStats())} -->`
+    ? `\n        <!-- Rendered with: ${renderType.toUpperCase()} -->`
     : '';
 
   return `
@@ -354,13 +356,15 @@ export function getRenderStats() {
   }
   
   return {
-    fml: fmlStats.getStats(),
+    fml: fmlStats ? fmlStats.getStats() : 'FML not loaded',
     memory: process.memoryUsage(),
     uptime: process.uptime()
   };
 }
 
 export async function clearRenderCache() {
+  await loadFMLModules();
+  const { clearTemplateCache } = await import('../fml/utils/helpers.js');
   await clearTemplateCache(); 
   console.log('🧹 FML template cache cleared');
 }

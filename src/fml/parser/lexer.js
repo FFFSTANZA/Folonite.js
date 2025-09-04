@@ -1,4 +1,5 @@
 // src/fml/parser/lexer.js
+// FML Lexer - Phase 1 (Optimized & Secure)
 
 export const TokenType = {
   // Basic HTML tokens
@@ -11,14 +12,14 @@ export const TokenType = {
   INTERPOLATION: 'INTERPOLATION', // {expression}
   
   // Attribute tokens
-  ATTRIBUTE: 'ATTRIBUTE',         // name="value"
-  ATTRIBUTE_DYNAMIC: 'ATTRIBUTE_DYNAMIC', // {prop: value}
+  ATTRIBUTE_STATIC: 'ATTRIBUTE_STATIC', // name="value"
+  ATTRIBUTE_DYNAMIC: 'ATTRIBUTE_DYNAMIC', // name={value}
   
   // Special tokens
   COMPONENT: 'COMPONENT',         // <ComponentName>
   EOF: 'EOF',                     // End of file
   
-  // Phase 2 tokens (placeholder)
+  // Phase 2 tokens (future-ready)
   DIRECTIVE: 'DIRECTIVE'          // <If>, <For>, etc.
 };
 
@@ -40,22 +41,39 @@ export class FMLLexer {
     this.column = 1;
 
     while (this.position < this.input.length) {
-      this.skipWhitespace();
-      
-      if (this.position >= this.input.length) break;
-      
+      const startLine = this.line;
+      const startColumn = this.column;
       const char = this.current();
-      
-      if (char === '<') {
-        this.tokenizeTag();
-      } else if (char === '{') {
-        this.tokenizeInterpolation();
-      } else {
-        this.tokenizeText();
+
+      // Skip whitespace
+      if (this.isWhitespace(char)) {
+        this.advance();
+        continue;
       }
+
+      // Handle comments
+      if (this.isCommentStart()) {
+        this.skipComment();
+        continue;
+      }
+
+      // Handle tags
+      if (char === '<') {
+        this.tokenizeTag(startLine, startColumn);
+        continue;
+      }
+
+      // Handle interpolation
+      if (char === '{') {
+        this.tokenizeInterpolation(startLine, startColumn);
+        continue;
+      }
+
+      // Handle text
+      this.tokenizeText(startLine, startColumn);
     }
 
-    this.tokens.push(this.createToken(TokenType.EOF, ''));
+    this.tokens.push(this.createToken(TokenType.EOF, '', this.line, this.column));
     return this.tokens;
   }
 
@@ -64,7 +82,7 @@ export class FMLLexer {
     return this.input[this.position] || '';
   }
 
-  // Get next character without advancing
+  // Peek ahead without advancing
   peek(offset = 1) {
     return this.input[this.position + offset] || '';
   }
@@ -80,59 +98,64 @@ export class FMLLexer {
     this.position++;
   }
 
-  // Skip whitespace (but preserve it in text nodes)
-  skipWhitespace() {
-    while (this.isWhitespace(this.current()) && !this.isInTag()) {
-      this.advance();
-    }
-  }
-
   // Check if character is whitespace
   isWhitespace(char) {
     return /\s/.test(char);
   }
 
-  // Check if we're currently inside a tag
-  isInTag() {
-    // Simple heuristic - can be improved in Phase 2
-    return false;
+  // Check if current position starts a comment
+  isCommentStart() {
+    return this.current() === '<' && 
+           this.peek() === '!' && 
+           this.peek(2) === '-' && 
+           this.peek(3) === '-';
   }
 
-  // Tokenize HTML-like tags
-  tokenizeTag() {
-    const start = this.position;
+  // Skip HTML comment <!-- ... -->
+  skipComment() {
+    // Skip "<!--"
+    for (let i = 0; i < 4; i++) this.advance();
+
+    // Read until "-->"
+    while (this.position < this.input.length - 2) {
+      if (this.current() === '-' && this.peek() === '-' && this.peek(2) === '>') {
+        break;
+      }
+      this.advance();
+    }
+
+    // Skip "-->"
+    if (this.position < this.input.length - 2) {
+      this.advance(); // -
+      this.advance(); // -
+      this.advance(); // >
+    }
+  }
+
+  // Tokenize tag
+  tokenizeTag(startLine, startColumn) {
     this.advance(); // Skip '<'
-    
-    // Check for closing tag
+
     const isClosing = this.current() === '/';
     if (isClosing) this.advance();
-    
-    // Read tag name
+
     const tagName = this.readTagName();
-    
     if (!tagName) {
-      throw new Error(`Invalid tag at line ${this.line}, column ${this.column}`);
+      this.error(`Invalid tag name`, startLine, startColumn);
     }
-    
-    // Skip whitespace before attributes
-    this.skipTagWhitespace();
-    
-    // Read attributes
+
+    this.skipWhitespace();
+
     const attributes = this.readAttributes();
-    
-    // Check for self-closing
+
     const isSelfClosing = this.current() === '/' && this.peek() === '>';
-    if (isSelfClosing) {
-      this.advance(); // Skip '/'
-    }
-    
-    // Expect closing '>'
+    if (isSelfClosing) this.advance();
+
     if (this.current() !== '>') {
-      throw new Error(`Expected '>' at line ${this.line}, column ${this.column}`);
+      this.error(`Expected '>'`, this.line, this.column);
     }
     this.advance(); // Skip '>'
-    
-    // Determine token type
+
     let tokenType;
     if (isClosing) {
       tokenType = TokenType.TAG_CLOSE;
@@ -143,15 +166,13 @@ export class FMLLexer {
     } else {
       tokenType = TokenType.TAG_OPEN;
     }
-    
-    const token = this.createToken(tokenType, {
+
+    this.tokens.push(this.createToken(tokenType, {
       tagName,
       attributes,
       isClosing,
       isSelfClosing
-    });
-    
-    this.tokens.push(token);
+    }, startLine, startColumn));
   }
 
   // Read tag name
@@ -164,77 +185,120 @@ export class FMLLexer {
     return name;
   }
 
-  // Check if character is valid for tag name
+  // Check if character is valid in tag name
   isTagNameChar(char) {
     return /[a-zA-Z0-9\-_]/.test(char);
   }
 
-  // Check if tag name represents a component (starts with uppercase)
+  // Check if tag is a component (PascalCase)
   isComponent(tagName) {
-    return /^[A-Z]/.test(tagName);
+    return /^[A-Z][a-zA-Z0-9]*$/.test(tagName);
   }
 
-  // Skip whitespace within tags
-  skipTagWhitespace() {
+  // Skip whitespace
+  skipWhitespace() {
     while (this.isWhitespace(this.current())) {
       this.advance();
     }
   }
 
-  // Read tag attributes
+  // Read all attributes
   readAttributes() {
-    const attributes = [];
-    
+    const attrs = [];
     while (this.current() && this.current() !== '>' && this.current() !== '/') {
-      this.skipTagWhitespace();
-      
+      this.skipWhitespace();
       if (this.current() === '{') {
-        // Dynamic attribute object {prop: value, another: value}
-        attributes.push(this.readDynamicAttributes());
+        attrs.push(this.readDynamicObject());
       } else if (this.isTagNameChar(this.current())) {
-        // Regular attribute name="value"
-        attributes.push(this.readStaticAttribute());
+        attrs.push(this.readAttribute());
       } else {
         break;
       }
-      
-      this.skipTagWhitespace();
+      this.skipWhitespace();
     }
-    
-    return attributes;
+    return attrs;
   }
 
-  // Read static attribute like name="value"
-  readStaticAttribute() {
+  // Read attribute (static or dynamic value)
+  readAttribute() {
+    const startLine = this.line;
+    const startColumn = this.column;
     const name = this.readAttributeName();
-    this.skipTagWhitespace();
-    
-    let value = true; // Boolean attribute default
-    
-    if (this.current() === '=') {
-      this.advance(); // Skip '='
-      this.skipTagWhitespace();
-      value = this.readAttributeValue();
+
+    this.skipWhitespace();
+
+    if (this.current() !== '=') {
+      return this.createToken(TokenType.ATTRIBUTE_STATIC, {
+        type: 'static',
+        name,
+        value: true
+      }, startLine, startColumn);
     }
-    
-    return {
-      type: 'static',
-      name,
-      value
-    };
+
+    this.advance(); // Skip '='
+    this.skipWhitespace();
+
+    let value;
+    if (this.current() === '{') {
+      value = this.readDynamicValue();
+      return this.createToken(TokenType.ATTRIBUTE_DYNAMIC, {
+        type: 'dynamic',
+        name,
+        content: value.content,
+        value: value.value
+      }, startLine, startColumn);
+    } else {
+      const staticValue = this.readAttributeValue();
+      return this.createToken(TokenType.ATTRIBUTE_STATIC, {
+        type: 'static',
+        name,
+        value: staticValue
+      }, startLine, startColumn);
+    }
   }
 
-  // Read dynamic attributes {prop: value}
-  readDynamicAttributes() {
+  // Read dynamic value: {expression}
+  readDynamicValue() {
+    const startLine = this.line;
+    const startColumn = this.column;
     this.advance(); // Skip '{'
-    
-    const content = this.readUntil('}');
-    this.advance(); // Skip '}'
-    
-    return {
-      type: 'dynamic',
+
+    let depth = 1;
+    let content = '';
+
+    while (this.position < this.input.length && depth > 0) {
+      const char = this.current();
+      if (char === '{') depth++;
+      if (char === '}') depth--;
+      if (depth > 0) content += char;
+      this.advance();
+    }
+
+    const value = content.trim();
+    return { content: value, value, line: startLine, column: startColumn };
+  }
+
+  // Read dynamic object: {prop: value, enabled: true}
+  readDynamicObject() {
+    const startLine = this.line;
+    const startColumn = this.column;
+    this.advance(); // Skip '{'
+
+    let depth = 1;
+    let content = '';
+
+    while (this.position < this.input.length && depth > 0) {
+      const char = this.current();
+      if (char === '{') depth++;
+      if (char === '}') depth--;
+      if (depth > 0) content += char;
+      this.advance();
+    }
+
+    return this.createToken(TokenType.ATTRIBUTE_DYNAMIC, {
+      type: 'dynamic-object',
       content: content.trim()
-    };
+    }, startLine, startColumn);
   }
 
   // Read attribute name
@@ -247,40 +311,36 @@ export class FMLLexer {
     return name;
   }
 
-  // Read attribute value (quoted string)
+  // Read attribute value (quoted or unquoted)
   readAttributeValue() {
     const quote = this.current();
-    
-    if (quote !== '"' && quote !== "'") {
-      // Unquoted value
-      return this.readUnquotedValue();
+    if (quote === '"' || quote === "'") {
+      return this.readQuotedValue();
     }
-    
+    return this.readUnquotedValue();
+  }
+
+  // Read quoted value
+  readQuotedValue() {
+    const quote = this.current();
     this.advance(); // Skip opening quote
     let value = '';
-    
     while (this.current() && this.current() !== quote) {
       if (this.current() === '\\') {
         this.advance(); // Skip escape
-        value += this.current() || '';
-      } else {
-        value += this.current();
       }
+      value += this.current();
       this.advance();
     }
-    
-    if (this.current() === quote) {
-      this.advance(); // Skip closing quote
-    }
-    
+    if (this.current() === quote) this.advance(); // Skip closing quote
     return value;
   }
 
-  // Read unquoted attribute value
+  // Read unquoted value
   readUnquotedValue() {
     let value = '';
-    while (this.current() && !this.isWhitespace(this.current()) && 
-           this.current() !== '>' && this.current() !== '/') {
+    while (this.current() && !this.isWhitespace(this.current()) &&
+           this.current() !== '>' && this.current() !== '/' && this.current() !== '=') {
       value += this.current();
       this.advance();
     }
@@ -288,60 +348,65 @@ export class FMLLexer {
   }
 
   // Tokenize interpolation {expression}
-  tokenizeInterpolation() {
-    this.advance(); // Skip '{'
-    
-    const content = this.readUntil('}');
-    
-    if (this.current() !== '}') {
-      throw new Error(`Unclosed interpolation at line ${this.line}, column ${this.column}`);
-    }
-    this.advance(); // Skip '}'
-    
-    this.tokens.push(this.createToken(TokenType.INTERPOLATION, content.trim()));
+  tokenizeInterpolation(startLine, startColumn) {
+    const { content, line, column } = this.readEnclosedExpression('{', '}');
+    this.tokens.push(this.createToken(TokenType.INTERPOLATION, content, startLine, startColumn));
   }
 
-  // Tokenize plain text content
-  tokenizeText() {
+  // Read text content
+  tokenizeText(startLine, startColumn) {
     let text = '';
-    
     while (this.current() && this.current() !== '<' && this.current() !== '{') {
       text += this.current();
       this.advance();
     }
-    
-    if (text) {
-      this.tokens.push(this.createToken(TokenType.TEXT, text));
+    if (text.trim()) {
+      this.tokens.push(this.createToken(TokenType.TEXT, text, startLine, startColumn));
     }
   }
 
-  // Read until specific character
-  readUntil(char) {
+  // Read expression enclosed in delimiters (e.g., { })
+  readEnclosedExpression(open, close) {
+    if (this.current() !== open) return { content: '', line: this.line, column: this.column };
+    this.advance(); // Skip open
+
+    let depth = 1;
     let content = '';
-    while (this.current() && this.current() !== char) {
-      content += this.current();
+    const startLine = this.line;
+    const startColumn = this.column;
+
+    while (this.position < this.input.length && depth > 0) {
+      const char = this.current();
+      if (char === open) depth++;
+      if (char === close) depth--;
+      if (depth > 0) content += char;
       this.advance();
     }
-    return content;
+
+    return { content: content.trim(), line: startLine, column: startColumn };
   }
 
-  // Create token object
-  createToken(type, value) {
+  // Create token with location
+  createToken(type, value, line, column) {
     return {
       type,
       value,
-      line: this.line,
-      column: this.column - (typeof value === 'string' ? value.length : 0)
+      line,
+      column
     };
   }
 
-  // Debug helper
+  // Error with location
+  error(message, line = this.line, column = this.column) {
+    throw new Error(`Lexer error at ${line}:${column} - ${message}`);
+  }
+
+  // Debug tokens
   debugTokens() {
     if (!this.debug) return;
-    
     console.log('FML Tokens:');
-    this.tokens.forEach((token, index) => {
-      console.log(`${index}: ${token.type} - ${JSON.stringify(token.value)}`);
+    this.tokens.forEach((t, i) => {
+      console.log(`${i}: ${t.type} -`, JSON.stringify(t.value));
     });
   }
 }

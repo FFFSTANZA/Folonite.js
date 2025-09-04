@@ -1,8 +1,6 @@
-<!-- examples/basic.fml -->
-<!-- Basic FML Example demonstrating Phase 1 features -->
-
-<div class="container">
-  <Header {title: "Welcome to FML"} />
+<!-- src/pages/basic.fml -->
+<div class="container" style="font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
+  <Header title="Welcome to FML" />
   
   <main>
     <h1>Hello, {user.name}!</h1>
@@ -16,7 +14,9 @@
       <h2>Your Dashboard</h2>
       
       <UserCard 
-        {name: user.name, avatar: user.avatar, status: "online"} 
+        name={user.name} 
+        avatar={user.avatar} 
+        status="online" 
       />
       
       <div class="stats">
@@ -36,11 +36,11 @@
     <Separator />
     
     <!-- Component with children -->
-    <Card {type: "info"}>
+    <Card type="info">
       <h3>Getting Started</h3>
       <p>Welcome to your new FML-powered application!</p>
       
-      <Button {variant: "primary", size: "large"}>
+      <Button variant="primary" size="large">
         Get Started
       </Button>
     </Card>

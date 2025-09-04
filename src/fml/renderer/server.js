@@ -1,6 +1,6 @@
 // src/fml/renderer/server.js
-
 import { escapeHtml } from '../utils/escape.js';
+import { SELF_CLOSING_TAGS, resolveExpression } from '../compiler/compiler.js';
 
 export function renderServer(compiled, props = {}, options = {}) {
   const renderer = new ServerRenderer(props, options);
@@ -11,25 +11,18 @@ class ServerRenderer {
   constructor(props = {}, options = {}) {
     this.props = props;
     this.debug = options.debug || false;
-    this.context = new Map();
     this.componentStack = [];
   }
 
-  // Main render method
   render(node) {
     if (!node) return '';
 
     switch (node.type) {
-      case 'fragment':
-        return this.renderFragment(node);
-      case 'element':
-        return this.renderElement(node);
-      case 'component':
-        return this.renderComponent(node);
-      case 'text':
-        return this.renderText(node);
-      case 'interpolation':
-        return this.renderInterpolation(node);
+      case 'fragment': return this.renderFragment(node);
+      case 'element': return this.renderElement(node);
+      case 'component': return this.renderComponent(node);
+      case 'text': return this.renderText(node);
+      case 'interpolation': return this.renderInterpolation(node);
       default:
         if (this.debug) {
           console.warn(`Unknown render node type: ${node.type}`);
@@ -39,14 +32,11 @@ class ServerRenderer {
   }
 
   renderFragment(node) {
-    return node.children
-      .map(child => this.render(child))
-      .join('');
+    return node.children.map(child => this.render(child)).join('');
   }
 
   renderElement(node) {
     const { tagName, attributes, children } = node;
-
     const attrs = this.renderAttributes(attributes);
 
     if (this.isSelfClosingTag(tagName)) {
@@ -65,25 +55,22 @@ class ServerRenderer {
     }
 
     if (this.componentStack.includes(name)) {
-      throw new Error(`Circular component reference detected: ${name}`);
+      throw new Error(`Circular component reference: ${name}`);
     }
 
     this.componentStack.push(name);
-
     try {
       const evaluatedProps = this.evaluateProps(props);
 
       if (children.length > 0) {
-        const renderedChildren = children.map(child => this.render(child)).join('');
-        evaluatedProps.children = renderedChildren;
+        evaluatedProps.children = children.map(child => this.render(child)).join('');
       }
 
       const result = component(evaluatedProps);
-
-      if (typeof result === 'string') return result;
-      if (result && typeof result === 'object') return this.render(result);
-
-      return String(result || '');
+      return typeof result === 'string' ? result : String(result || '');
+    } catch (error) {
+      console.error(`Error rendering component ${name}:`, error);
+      return `<div class="fml-error">❌ Failed to render ${name}</div>`;
     } finally {
       this.componentStack.pop();
     }
@@ -95,11 +82,11 @@ class ServerRenderer {
 
   renderInterpolation(node) {
     try {
-      const value = this.evaluateExpression(node.compiled);
-      return escapeHtml(String(value || ''));
+      const value = resolveExpression(node.compiled, this.props);
+      return escapeHtml(String(value ?? ''));
     } catch (error) {
       if (this.debug) {
-        console.error(`Interpolation error: ${error.message}`, node);
+        console.error(`Interpolation error:`, error);
         return `<!-- Error: ${error.message} -->`;
       }
       return '';
@@ -114,85 +101,44 @@ class ServerRenderer {
     for (const [name, attr] of Object.entries(attributes)) {
       try {
         if (attr.type === 'static') {
-          attrs.push(this.renderStaticAttribute(name, attr.value));
+          const val = escapeHtml(String(attr.value));
+          attrs.push(attr.value === true ? name : `${name}="${val}"`);
         } else if (attr.type === 'dynamic') {
-          const value = this.evaluateExpression(attr.compiled);
+          const value = resolveExpression(attr.compiled, this.props);
           if (value !== null && value !== undefined && value !== false) {
-            attrs.push(this.renderStaticAttribute(name, value));
+            const val = escapeHtml(String(value));
+            attrs.push(value === true ? name : `${name}="${val}"`);
           }
         }
       } catch (error) {
-        if (this.debug) console.error(`Attribute evaluation error for "${name}":`, error);
+        if (this.debug) {
+          console.error(`Attribute error for "${name}":`, error);
+        }
       }
     }
 
     return attrs.length > 0 ? ' ' + attrs.join(' ') : '';
   }
 
-  renderStaticAttribute(name, value) {
-    if (value === true) return name;
-    if (value === false || value === null || value === undefined) return '';
-
-    const escapedValue = escapeHtml(String(value));
-    return `${name}="${escapedValue}"`;
+  isSelfClosingTag(tagName) {
+    return SELF_CLOSING_TAGS.has(tagName.toLowerCase());
   }
 
   evaluateProps(props) {
     const evaluated = {};
-
     for (const [name, prop] of Object.entries(props)) {
       try {
-        if (prop.type === 'static') evaluated[name] = prop.value;
-        else if (prop.type === 'dynamic') evaluated[name] = this.evaluateExpression(prop.compiled);
+        evaluated[name] = prop.type === 'static'
+          ? prop.value
+          : resolveExpression(prop.compiled, this.props);
       } catch (error) {
-        if (this.debug) console.error(`Prop evaluation error for "${name}":`, error);
+        if (this.debug) {
+          console.error(`Prop error for "${name}":`, error);
+        }
         evaluated[name] = undefined;
       }
     }
-
     return evaluated;
-  }
-
-  evaluateExpression(compiled) {
-    if (!compiled) return undefined;
-
-    switch (compiled.type) {
-      case 'literal':
-        return compiled.value;
-      case 'property':
-        return this.evaluatePropertyAccess(compiled.path);
-      case 'expression':
-        return this.evaluateUnsafeExpression(compiled.code);
-      default:
-        return undefined;
-    }
-  }
-
-  evaluatePropertyAccess(path) {
-    let current = this.props;
-
-    for (const segment of path) {
-      if (current === null || current === undefined) return undefined;
-      if (typeof current === 'object' && segment in current) current = current[segment];
-      else return undefined;
-    }
-
-    return current;
-  }
-
-  evaluateUnsafeExpression(code) {
-    if (this.debug) {
-      console.warn(`Unsafe expression evaluation disabled in Phase 1: ${code}`);
-    }
-    return `[Expression: ${code}]`;
-  }
-
-  isSelfClosingTag(tagName) {
-    const selfClosingTags = new Set([
-      'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-      'link', 'meta', 'param', 'source', 'track', 'wbr'
-    ]);
-    return selfClosingTags.has(tagName.toLowerCase());
   }
 
   getStats() {
@@ -203,4 +149,3 @@ class ServerRenderer {
     };
   }
 }
-

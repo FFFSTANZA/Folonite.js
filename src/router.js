@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
-import { renderPage } from './views/renderPage.js';
+import { renderPage } from './views/renderPage';
 
 export function setupDynamicRouting(app) {
   const pagesDir = path.resolve('./src/pages');

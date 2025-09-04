@@ -1,0 +1,50 @@
+<!-- examples/basic.fml -->
+<!-- Basic FML Example demonstrating Phase 1 features -->
+
+<div class="container">
+  <Header {title: "Welcome to FML"} />
+  
+  <main>
+    <h1>Hello, {user.name}!</h1>
+    
+    <section class="user-info">
+      <p>Email: {user.email}</p>
+      <p>Role: {user.role}</p>
+    </section>
+    
+    <div class="content">
+      <h2>Your Dashboard</h2>
+      
+      <UserCard 
+        {name: user.name, avatar: user.avatar, status: "online"} 
+      />
+      
+      <div class="stats">
+        <div class="stat-item">
+          <span class="label">Posts</span>
+          <span class="value">{stats.posts}</span>
+        </div>
+        
+        <div class="stat-item">
+          <span class="label">Followers</span>
+          <span class="value">{stats.followers}</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Self-closing component -->
+    <Separator />
+    
+    <!-- Component with children -->
+    <Card {type: "info"}>
+      <h3>Getting Started</h3>
+      <p>Welcome to your new FML-powered application!</p>
+      
+      <Button {variant: "primary", size: "large"}>
+        Get Started
+      </Button>
+    </Card>
+  </main>
+  
+  <Footer />
+</div>

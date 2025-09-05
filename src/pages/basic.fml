@@ -1,50 +1,76 @@
 <!-- src/pages/basic.fml -->
 <div class="container" style="font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
-  <Header title="Welcome to FML" />
   
+  <!-- Header (replaced with plain HTML) -->
+  <header class="page-header" style="text-align: center; margin-bottom: 2rem; padding: 1rem; background: #f3f4f6; border-radius: 8px;">
+    <h1>Welcome to FML</h1>
+    <p>A simple, powerful template language</p>
+  </header>
+
+  <!-- Main Content -->
   <main>
-    <h1>Hello, {user.name}!</h1>
+    <h2>Hello, {user.name}!</h2>
     
-    <section class="user-info">
-      <p>Email: {user.email}</p>
-      <p>Role: {user.role}</p>
+    <!-- User Info -->
+    <section class="user-info" style="background: #f9fafb; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+      <p><strong>Email:</strong> {user.email}</p>
+      <p><strong>Role:</strong> {user.role}</p>
     </section>
-    
+
+    <!-- Dashboard Content -->
     <div class="content">
-      <h2>Your Dashboard</h2>
-      
-      <UserCard 
-        name={user.name} 
-        avatar={user.avatar} 
-        status="online" 
-      />
-      
-      <div class="stats">
-        <div class="stat-item">
-          <span class="label">Posts</span>
-          <span class="value">{stats.posts}</span>
+      <h3>Your Dashboard</h3>
+
+      <!-- User Card (replaced with plain HTML) -->
+      <div class="user-card" style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: white; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 1.5rem;">
+        <img src="{user.avatar}" alt="{user.name}" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover;" />
+        <div>
+          <h4 style="margin: 0;">{user.name}</h4>
+          <span style="color: green; font-size: 0.9em;">● Online</span>
         </div>
-        
-        <div class="stat-item">
-          <span class="label">Followers</span>
-          <span class="value">{stats.followers}</span>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats" style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+        <div class="stat-item" style="flex: 1; text-align: center; background: #e0f2fe; padding: 1rem; border-radius: 8px;">
+          <div class="label" style="font-size: 0.9em; color: #374151;">Posts</div>
+          <div class="value" style="font-size: 1.5em; font-weight: bold;">{stats.posts}</div>
+        </div>
+        <div class="stat-item" style="flex: 1; text-align: center; background: #dcfce7; padding: 1rem; border-radius: 8px;">
+          <div class="label" style="font-size: 0.9em; color: #374151;">Followers</div>
+          <div class="value" style="font-size: 1.5em; font-weight: bold;">{stats.followers}</div>
         </div>
       </div>
     </div>
-    
-    <!-- Self-closing component -->
-    <Separator />
-    
-    <!-- Component with children -->
-    <Card type="info">
+
+    <!-- Separator (replaced with HR) -->
+    <hr style="border: 1px solid #e5e7eb; margin: 2rem 0; opacity: 0.5;" />
+
+    <!-- Card with Content (replaced with plain HTML) -->
+    <div class="card info" style="background: #eff6ff; border: 1px solid #bfdbfe; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem;">
       <h3>Getting Started</h3>
       <p>Welcome to your new FML-powered application!</p>
       
-      <Button variant="primary" size="large">
+      <!-- Button (replaced with plain button) -->
+      <button style="
+        background: #2563eb;
+        color: white;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        font-size: 1rem;
+        border-radius: 6px;
+        cursor: pointer;
+        margin-top: 0.5rem;
+      ">
         Get Started
-      </Button>
-    </Card>
+      </button>
+    </div>
   </main>
-  
-  <Footer />
+
+  <!-- Footer (replaced with plain HTML) -->
+  <footer class="page-footer" style="text-align: center; margin-top: 2rem; padding: 1rem; color: #6b7280; font-size: 0.9em;">
+    <p>&copy; {year} Folonite.js. All rights reserved.</p>
+    <p>Built with pure FML — no components needed.</p>
+  </footer>
+
 </div>

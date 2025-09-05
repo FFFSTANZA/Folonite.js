@@ -1,4 +1,5 @@
 // src/fml/utils/escape.js
+// Centralized HTML escaping utilities for FML
 
 const HTML_ESCAPE_MAP = {
   '&': '&amp;',
@@ -11,12 +12,16 @@ const HTML_ESCAPE_MAP = {
 
 /**
  * Escape HTML entities in a string
- * @param {string} text - Text to escape
+ * @param {any} text - Text to escape
  * @returns {string} Escaped text
  */
 export function escapeHtml(text) {
+  if (text === null || text === undefined) {
+    return '';
+  }
+  
   if (typeof text !== 'string') {
-    return String(text || '');
+    text = String(text);
   }
   
   return text.replace(/[&<>"'\/]/g, char => HTML_ESCAPE_MAP[char]);
@@ -25,12 +30,16 @@ export function escapeHtml(text) {
 /**
  * Escape HTML attributes
  * More permissive than text content escaping
- * @param {string} attr - Attribute value to escape
+ * @param {any} attr - Attribute value to escape
  * @returns {string} Escaped attribute value
  */
 export function escapeAttribute(attr) {
+  if (attr === null || attr === undefined) {
+    return '';
+  }
+  
   if (typeof attr !== 'string') {
-    return String(attr || '');
+    attr = String(attr);
   }
   
   return attr.replace(/["&]/g, char => HTML_ESCAPE_MAP[char]);

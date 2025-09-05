@@ -1,0 +1,206 @@
+<!-- src/pages/advanced.fml -->
+<!-- FML Phase 2 Example - Advanced Features -->
+
+<main class="app-layout" style="font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px;">
+  
+  <Header title="FML Phase 2 - Advanced Features" />
+
+  <!-- Phase 2: Conditional Rendering -->
+  <section class="conditional-demo">
+    <h2>🎯 Conditional Rendering</h2>
+    
+    <If condition={user.isAuthenticated}>
+      <div class="welcome-panel" style="background: #dcfce7; border: 1px solid #22c55e; padding: 16px; border-radius: 8px;">
+        <h3>Welcome back, {user.name}!</h3>
+        <p>You have {user.notifications.length} new notifications.</p>
+        
+        <If condition={user.isPremium}>
+          <span class="badge premium" style="background: #fbbf24; color: #000; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
+            ⭐ Premium Member
+          </span>
+        <Else>
+          <a href="/upgrade" style="color: #3b82f6;">Upgrade to Premium</a>
+        </Else>
+        </If>
+      </div>
+    <Else>
+      <div class="login-panel" style="background: #fef2f2; border: 1px solid #ef4444; padding: 16px; border-radius: 8px;">
+        <h3>Please Log In</h3>
+        <p>Sign in to access your dashboard and premium features.</p>
+        <Button variant="primary" onClick={actions.showLogin}>Sign In</Button>
+      </div>
+    </Else>
+    </If>
+  </section>
+
+  <!-- Phase 2: List Rendering -->
+  <section class="list-demo">
+    <h2>🔄 List Rendering</h2>
+    
+    <div class="task-list">
+      <h3>Your Tasks ({tasks.length})</h3>
+      
+      <If condition={tasks.length > 0}>
+        <ul style="list-style: none; padding: 0;">
+          <For each={tasks} as="task" index="i">
+            <li style="display: flex; align-items: center; padding: 12px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px; background: white;">
+              
+              <!-- Task Status Icon -->
+              <span style="margin-right: 12px; font-size: 18px;">
+                <If condition={task.completed}>
+                  ✅
+                <Else>
+                  ⏳
+                </Else>
+                </If>
+              </span>
+              
+              <!-- Task Content -->
+              <div style="flex: 1;">
+                <strong style={task.completed ? "text-decoration: line-through; color: #6b7280;" : ""}>
+                  {task.title}
+                </strong>
+                <If condition={task.description}>
+                  <p style="margin: 4px 0 0 0; color: #6b7280; font-size: 14px;">
+                    {task.description}
+                  </p>
+                </If>
+              </div>
+              
+              <!-- Task Actions -->
+              <div class="task-actions">
+                <If condition={!task.completed}>
+                  <button 
+                    onClick={() => actions.completeTask(task.id)}
+                    style="background: #22c55e; color: white; border: none; padding: 6px 12px; border-radius: 4px; margin-left: 8px; cursor: pointer;"
+                  >
+                    Complete
+                  </button>
+                </If>
+                <button 
+                  onClick={() => actions.deleteTask(task.id)}
+                  style="background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 4px; margin-left: 8px; cursor: pointer;"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          </For>
+        </ul>
+      <Else>
+        <div style="text-align: center; padding: 40px; color: #6b7280;">
+          <p>No tasks yet. Create your first task to get started!</p>
+          <Button variant="primary" onClick={actions.createTask}>Add Task</Button>
+        </div>
+      </Else>
+      </If>
+    </div>
+  </section>
+
+  <!-- Phase 2: Switch/Case -->
+  <section class="switch-demo">
+    <h2>🔀 Switch Statement</h2>
+    
+    <div class="user-status-card" style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; background: white;">
+      <Switch value={user.status}>
+        <Case value="online">
+          <div style="display: flex; align-items: center; color: #22c55e;">
+            <span style="width: 12px; height: 12px; background: #22c55e; border-radius: 50%; margin-right: 8px;"></span>
+            <strong>Online</strong> - Available for messages
+          </div>
+        </Case>
+        
+        <Case value="away">
+          <div style="display: flex; align-items: center; color: #f59e0b;">
+            <span style="width: 12px; height: 12px; background: #f59e0b; border-radius: 50%; margin-right: 8px;"></span>
+            <strong>Away</strong> - Back in {user.awayDuration}
+          </div>
+        </Case>
+        
+        <Case value="busy">
+          <div style="display: flex; align-items: center; color: #ef4444;">
+            <span style="width: 12px; height: 12px; background: #ef4444; border-radius: 50%; margin-right: 8px;"></span>
+            <strong>Busy</strong> - Do not disturb
+          </div>
+        </Case>
+        
+        <Default>
+          <div style="display: flex; align-items: center; color: #6b7280;">
+            <span style="width: 12px; height: 12px; background: #6b7280; border-radius: 50%; margin-right: 8px;"></span>
+            <strong>Offline</strong> - Last seen {user.lastSeen}
+          </div>
+        </Default>
+      </Switch>
+    </div>
+  </section>
+
+  <!-- Phase 2: Advanced Expressions -->
+  <section class="expressions-demo">
+    <h2>⚡ Advanced Expressions</h2>
+    
+    <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+      
+      <!-- Math & Filter Operations -->
+      <Card type="stat">
+        <h4>📊 Calculations</h4>
+        <div>Total Tasks: <strong>{tasks.length}</strong></div>
+        <div>Completed: <strong>{tasks.filter(t => t.completed).length}</strong></div>
+        <div>Progress: <strong>{Math.round((tasks.filter(t => t.completed).length / tasks.length) * 100) || 0}%</strong></div>
+        <div>Remaining: <strong>{tasks.length - tasks.filter(t => t.completed).length}</strong></div>
+      </Card>
+      
+      <!-- Ternary & Conditional Expressions -->
+      <Card type="stat">
+        <h4>🎯 Conditional Logic</h4>
+        <div>Status: <strong>{user.isAuthenticated ? 'Logged In' : 'Guest'}</strong></div>
+        <div>Plan: <strong>{user.isPremium ? 'Premium' : 'Free'}</strong></div>
+        <div>Tasks: <strong>{tasks.length > 0 ? 'Active' : 'Empty'}</strong></div>
+        <div>Level: <strong>{user.points > 1000 ? 'Expert' : user.points > 100 ? 'Intermediate' : 'Beginner'}</strong></div>
+      </Card>
+      
+      <!-- Array Slicing & Iteration -->
+      <Card type="stat">
+        <h4>📋 Data Operations</h4>
+        <div>Recent Tasks:</div>
+        <For each={tasks.slice(0, 3)} as="task">
+          <div style="font-size: 12px; color: #6b7280;">• {task.title}</div>
+        </For>
+        <If condition={tasks.length > 3}>
+          <div style="font-size: 12px; color: #3b82f6;">+{tasks.length - 3} more</div>
+        </If>
+      </Card>
+      
+    </div>
+  </section>
+
+  <!-- Phase 2: Slots (Web Component Integration) -->
+  <section class="slots-demo">
+    <h2>🪄 Slots (Component Composition)</h2>
+    
+    <Modal title="User Profile" isOpen={modals.profile}>
+      <Slot name="header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <img src={user.avatar} alt="" style="width: 24px; height: 24px; border-radius: 50%;" />
+          <strong>{user.name}</strong>
+        </div>
+      </Slot>
+
+      <Slot name="body">
+        <p><strong>Email:</strong> {user.email}</p>
+        <p><strong>Member Since:</strong> {user.joined}</p>
+        <p><strong>Status:</strong> {user.status}</p>
+      </Slot>
+
+      <Slot name="footer">
+        <Button onClick={actions.closeProfile}>Close</Button>
+        <Button variant="primary" onClick={actions.editProfile}>Edit</Button>
+      </Slot>
+    </Modal>
+  </section>
+
+  <!-- Footer -->
+  <footer style="margin-top: 40px; text-align: center; color: #6b7280; font-size: 14px;">
+    <p>Powered by FML Framework • Phase 2 Active</p>
+  </footer>
+
+</main>

@@ -1,233 +1,317 @@
 // src/fml/parser/lexer.js
-// FML Lexer - Phase 1 (Optimized & Secure)
+// Enhanced FML Lexer - Robust & Powerful (Phase 1 + Phase 2)
 
 export const TokenType = {
   // Basic HTML tokens
   TAG_OPEN: 'TAG_OPEN',           // <div>
   TAG_CLOSE: 'TAG_CLOSE',         // </div>
   TAG_SELF_CLOSE: 'TAG_SELF_CLOSE', // <br />
-  
+
   // Content tokens
-  TEXT: 'TEXT',                   // Plain text content
-  INTERPOLATION: 'INTERPOLATION', // {expression}
-  
+  TEXT: 'TEXT',                   // Plain text
+  INTERPOLATION: 'INTERPOLATION', // {simple}
+  EXPRESSION_COMPLEX: 'EXPRESSION_COMPLEX', // {a + b}, {user.getName()}
+
   // Attribute tokens
   ATTRIBUTE_STATIC: 'ATTRIBUTE_STATIC', // name="value"
   ATTRIBUTE_DYNAMIC: 'ATTRIBUTE_DYNAMIC', // name={value}
-  
+  EVENT_HANDLER: 'EVENT_HANDLER',       // onClick={handler}
+
   // Special tokens
-  COMPONENT: 'COMPONENT',         // <ComponentName>
+  COMPONENT: 'COMPONENT',         // <MyComponent>
+  DIRECTIVE: 'DIRECTIVE',         // <If>, <For>, etc.
   EOF: 'EOF',                     // End of file
-  
-  // Phase 2 tokens (future-ready)
-  DIRECTIVE: 'DIRECTIVE'          // <If>, <For>, etc.
 };
+
+// Phase 2: Built-in directives and event attributes
+const BUILTIN_DIRECTIVES = new Set([
+  'If', 'Else', 'ElseIf', 'For', 'Switch', 'Case', 'Default', 'Slot'
+]);
+
+const EVENT_PREFIX = /^on[A-Z]/;
+const EVENT_ATTRIBUTES = new Set([
+  'onClick', 'onSubmit', 'onChange', 'onInput', 'onFocus', 'onBlur',
+  'onMouseOver', 'onMouseOut', 'onKeyDown', 'onKeyUp', 'onLoad',
+  'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave',
+  'onDoubleClick', 'onContextMenu', 'onScroll', 'onResize'
+]);
 
 export class FMLLexer {
   constructor(input, options = {}) {
     this.input = input;
+    this.length = input.length;
     this.position = 0;
     this.line = 1;
     this.column = 1;
-    this.debug = options.debug || false;
+    this.debug = !!options.debug;
+    this.phase2 = options.phase2 !== false;
     this.tokens = [];
+    this.errors = [];
   }
 
-  // Main tokenization method
   tokenize() {
     this.tokens = [];
+    this.errors = [];
     this.position = 0;
     this.line = 1;
     this.column = 1;
 
-    while (this.position < this.input.length) {
-      const startLine = this.line;
-      const startColumn = this.column;
-      const char = this.current();
-
-      // Skip whitespace
-      if (this.isWhitespace(char)) {
+    try {
+      while (this.position < this.length) {
+        if (this.tokenizeNext()) {
+          continue;
+        }
+        
+        // If we get here, we couldn't tokenize anything - advance to prevent infinite loop
+        const char = this.current();
+        if (char) {
+          this.error(`Unexpected character: '${char}'`);
+        }
         this.advance();
-        continue;
       }
 
-      // Handle comments
-      if (this.isCommentStart()) {
-        this.skipComment();
-        continue;
+      this.tokens.push(this.createToken(TokenType.EOF, '', this.line, this.column));
+    } catch (err) {
+      if (this.debug) {
+        console.error('Lexer error:', err);
+        console.log('Position:', this.position, 'Character:', this.current());
+        console.log('Context:', this.input.slice(Math.max(0, this.position - 20), this.position + 20));
       }
-
-      // Handle tags
-      if (char === '<') {
-        this.tokenizeTag(startLine, startColumn);
-        continue;
-      }
-
-      // Handle interpolation
-      if (char === '{') {
-        this.tokenizeInterpolation(startLine, startColumn);
-        continue;
-      }
-
-      // Handle text
-      this.tokenizeText(startLine, startColumn);
+      throw err;
     }
 
-    this.tokens.push(this.createToken(TokenType.EOF, '', this.line, this.column));
+    if (this.debug) this.debugTokens();
     return this.tokens;
   }
 
-  // Get current character
-  current() {
-    return this.input[this.position] || '';
-  }
+  // Main tokenization dispatcher
+  tokenizeNext() {
+    const startLine = this.line;
+    const startColumn = this.column;
+    const char = this.current();
 
-  // Peek ahead without advancing
-  peek(offset = 1) {
-    return this.input[this.position + offset] || '';
-  }
-
-  // Advance position
-  advance() {
-    if (this.current() === '\n') {
-      this.line++;
-      this.column = 1;
-    } else {
-      this.column++;
+    // Skip whitespace
+    if (this.isWhitespace(char)) {
+      this.skipWhitespace();
+      return true;
     }
-    this.position++;
+
+    // Skip comments
+    if (this.isCommentStart()) {
+      this.skipComment();
+      return true;
+    }
+
+    // Handle tags
+    if (char === '<') {
+      this.tokenizeTag(startLine, startColumn);
+      return true;
+    }
+
+    // Handle interpolation/expressions
+    if (char === '{') {
+      this.tokenizeInterpolation(startLine, startColumn);
+      return true;
+    }
+
+    // Handle text content
+    if (char && char !== '<' && char !== '{') {
+      this.tokenizeText(startLine, startColumn);
+      return true;
+    }
+
+    return false;
   }
 
-  // Check if character is whitespace
+  // === Character Utilities ===
+  current() {
+    return this.position < this.length ? this.input[this.position] : '';
+  }
+
+  peek(offset = 1) {
+    const pos = this.position + offset;
+    return pos < this.length ? this.input[pos] : '';
+  }
+
+  advance() {
+    if (this.position < this.length) {
+      if (this.current() === '\n') {
+        this.line++;
+        this.column = 1;
+      } else {
+        this.column++;
+      }
+      this.position++;
+    }
+    return this.current();
+  }
+
   isWhitespace(char) {
     return /\s/.test(char);
   }
 
-  // Check if current position starts a comment
-  isCommentStart() {
-    return this.current() === '<' && 
-           this.peek() === '!' && 
-           this.peek(2) === '-' && 
-           this.peek(3) === '-';
+  isAlpha(char) {
+    return /[a-zA-Z]/.test(char);
   }
 
-  // Skip HTML comment <!-- ... -->
-  skipComment() {
-    // Skip "<!--"
-    for (let i = 0; i < 4; i++) this.advance();
+  isAlphaNumeric(char) {
+    return /[a-zA-Z0-9]/.test(char);
+  }
 
-    // Read until "-->"
-    while (this.position < this.input.length - 2) {
+  isTagNameChar(char) {
+    return /[a-zA-Z0-9\-_]/.test(char);
+  }
+
+  isAttributeNameChar(char) {
+    return /[a-zA-Z0-9\-_:]/.test(char);
+  }
+
+  // === Comment Handling ===
+  isCommentStart() {
+    return (
+      this.current() === '<' &&
+      this.peek() === '!' &&
+      this.peek(2) === '-' &&
+      this.peek(3) === '-'
+    );
+  }
+
+  skipComment() {
+    // Skip <!--
+    this.advance(); this.advance(); this.advance(); this.advance();
+
+    while (this.position < this.length - 2) {
       if (this.current() === '-' && this.peek() === '-' && this.peek(2) === '>') {
-        break;
+        // Skip -->
+        this.advance(); this.advance(); this.advance();
+        return;
       }
       this.advance();
     }
-
-    // Skip "-->"
-    if (this.position < this.input.length - 2) {
-      this.advance(); // -
-      this.advance(); // -
-      this.advance(); // >
-    }
+    
+    this.error("Unclosed HTML comment");
   }
 
-  // Tokenize tag
+  // === Tag Tokenization ===
   tokenizeTag(startLine, startColumn) {
     this.advance(); // Skip '<'
 
+    // Check for closing tag
     const isClosing = this.current() === '/';
-    if (isClosing) this.advance();
+    if (isClosing) {
+      this.advance();
+    }
 
+    // Read tag name
     const tagName = this.readTagName();
     if (!tagName) {
-      this.error(`Invalid tag name`, startLine, startColumn);
+      this.error("Expected tag name after '<'");
     }
 
     this.skipWhitespace();
 
-    const attributes = this.readAttributes();
+    // Read attributes (only for opening tags)
+    const attributes = isClosing ? [] : this.readAttributes();
 
+    // Check for self-closing
     const isSelfClosing = this.current() === '/' && this.peek() === '>';
-    if (isSelfClosing) this.advance();
+    if (isSelfClosing) {
+      this.advance(); // Skip '/'
+    }
 
+    // Expect closing '>'
     if (this.current() !== '>') {
-      this.error(`Expected '>'`, this.line, this.column);
+      this.error(`Expected '>' to close tag, found '${this.current()}'`);
     }
     this.advance(); // Skip '>'
 
+    // Determine token type
     let tokenType;
     if (isClosing) {
       tokenType = TokenType.TAG_CLOSE;
     } else if (isSelfClosing) {
       tokenType = TokenType.TAG_SELF_CLOSE;
+    } else if (this.phase2 && BUILTIN_DIRECTIVES.has(tagName)) {
+      tokenType = TokenType.DIRECTIVE;
     } else if (this.isComponent(tagName)) {
       tokenType = TokenType.COMPONENT;
     } else {
       tokenType = TokenType.TAG_OPEN;
     }
 
-    this.tokens.push(this.createToken(tokenType, {
-      tagName,
-      attributes,
-      isClosing,
-      isSelfClosing
-    }, startLine, startColumn));
+    this.tokens.push(
+      this.createToken(tokenType, {
+        tagName,
+        attributes,
+        isClosing,
+        isSelfClosing
+      }, startLine, startColumn)
+    );
   }
 
-  // Read tag name
   readTagName() {
     let name = '';
-    while (this.isTagNameChar(this.current())) {
+    while (this.position < this.length && this.isTagNameChar(this.current())) {
       name += this.current();
       this.advance();
     }
     return name;
   }
 
-  // Check if character is valid in tag name
-  isTagNameChar(char) {
-    return /[a-zA-Z0-9\-_]/.test(char);
-  }
-
-  // Check if tag is a component (PascalCase)
   isComponent(tagName) {
     return /^[A-Z][a-zA-Z0-9]*$/.test(tagName);
   }
 
-  // Skip whitespace
-  skipWhitespace() {
-    while (this.isWhitespace(this.current())) {
-      this.advance();
-    }
-  }
-
-  // Read all attributes
+  // === Attributes ===
   readAttributes() {
     const attrs = [];
-    while (this.current() && this.current() !== '>' && this.current() !== '/') {
+    
+    while (this.position < this.length) {
       this.skipWhitespace();
-      if (this.current() === '{') {
-        attrs.push(this.readDynamicObject());
-      } else if (this.isTagNameChar(this.current())) {
-        attrs.push(this.readAttribute());
-      } else {
+      
+      const char = this.current();
+      if (!char || char === '>' || char === '/') {
         break;
       }
-      this.skipWhitespace();
+
+      try {
+        if (char === '{') {
+          // Dynamic object spread: {...props}
+          attrs.push(this.readDynamicObject());
+        } else if (this.isAlpha(char)) {
+          // Regular attribute
+          attrs.push(this.readAttribute());
+        } else {
+          // Unknown character - skip it
+          this.error(`Unexpected character in attributes: '${char}'`);
+        }
+      } catch (err) {
+        if (this.debug) {
+          console.warn('Attribute parsing error:', err.message);
+        }
+        // Try to recover by skipping to next whitespace or tag end
+        this.skipToNextAttribute();
+      }
     }
+    
     return attrs;
   }
 
-  // Read attribute (static or dynamic value)
   readAttribute() {
     const startLine = this.line;
     const startColumn = this.column;
+    
+    // Read attribute name
     const name = this.readAttributeName();
+    if (!name) {
+      this.error("Expected attribute name");
+    }
 
     this.skipWhitespace();
 
+    // Check for value
     if (this.current() !== '=') {
+      // Boolean attribute
       return this.createToken(TokenType.ATTRIBUTE_STATIC, {
         type: 'static',
         name,
@@ -238,16 +322,22 @@ export class FMLLexer {
     this.advance(); // Skip '='
     this.skipWhitespace();
 
-    let value;
-    if (this.current() === '{') {
-      value = this.readDynamicValue();
-      return this.createToken(TokenType.ATTRIBUTE_DYNAMIC, {
-        type: 'dynamic',
+    // Read attribute value
+    const valueChar = this.current();
+    
+    if (valueChar === '{') {
+      // Dynamic value
+      const dynamic = this.readDynamicValue();
+      const isEvent = this.phase2 && this.isEventAttribute(name);
+
+      return this.createToken(isEvent ? TokenType.EVENT_HANDLER : TokenType.ATTRIBUTE_DYNAMIC, {
+        type: isEvent ? 'event' : 'dynamic',
         name,
-        content: value.content,
-        value: value.value
+        content: dynamic.content,
+        value: dynamic.value
       }, startLine, startColumn);
     } else {
+      // Static value
       const staticValue = this.readAttributeValue();
       return this.createToken(TokenType.ATTRIBUTE_STATIC, {
         type: 'static',
@@ -257,156 +347,282 @@ export class FMLLexer {
     }
   }
 
-  // Read dynamic value: {expression}
-  readDynamicValue() {
-    const startLine = this.line;
-    const startColumn = this.column;
-    this.advance(); // Skip '{'
-
-    let depth = 1;
-    let content = '';
-
-    while (this.position < this.input.length && depth > 0) {
-      const char = this.current();
-      if (char === '{') depth++;
-      if (char === '}') depth--;
-      if (depth > 0) content += char;
-      this.advance();
-    }
-
-    const value = content.trim();
-    return { content: value, value, line: startLine, column: startColumn };
-  }
-
-  // Read dynamic object: {prop: value, enabled: true}
-  readDynamicObject() {
-    const startLine = this.line;
-    const startColumn = this.column;
-    this.advance(); // Skip '{'
-
-    let depth = 1;
-    let content = '';
-
-    while (this.position < this.input.length && depth > 0) {
-      const char = this.current();
-      if (char === '{') depth++;
-      if (char === '}') depth--;
-      if (depth > 0) content += char;
-      this.advance();
-    }
-
-    return this.createToken(TokenType.ATTRIBUTE_DYNAMIC, {
-      type: 'dynamic-object',
-      content: content.trim()
-    }, startLine, startColumn);
-  }
-
-  // Read attribute name
   readAttributeName() {
     let name = '';
-    while (this.isTagNameChar(this.current()) || this.current() === ':') {
+    while (this.position < this.length && this.isAttributeNameChar(this.current())) {
       name += this.current();
       this.advance();
     }
     return name;
   }
 
-  // Read attribute value (quoted or unquoted)
-  readAttributeValue() {
-    const quote = this.current();
-    if (quote === '"' || quote === "'") {
-      return this.readQuotedValue();
-    }
-    return this.readUnquotedValue();
+  isEventAttribute(name) {
+    return EVENT_ATTRIBUTES.has(name) || EVENT_PREFIX.test(name);
   }
 
-  // Read quoted value
-  readQuotedValue() {
-    const quote = this.current();
-    this.advance(); // Skip opening quote
-    let value = '';
-    while (this.current() && this.current() !== quote) {
-      if (this.current() === '\\') {
-        this.advance(); // Skip escape
-      }
-      value += this.current();
-      this.advance();
+  readAttributeValue() {
+    const char = this.current();
+    
+    if (char === '"' || char === "'") {
+      return this.readQuotedValue(char);
+    } else {
+      return this.readUnquotedValue();
     }
-    if (this.current() === quote) this.advance(); // Skip closing quote
+  }
+
+  readQuotedValue(quote) {
+    this.advance(); // Skip opening quote
+    
+    let value = '';
+    while (this.position < this.length) {
+      const char = this.current();
+      
+      if (char === quote) {
+        this.advance(); // Skip closing quote
+        break;
+      }
+      
+      if (char === '\\') {
+        // Handle escape sequences
+        this.advance();
+        const escaped = this.current();
+        if (escaped) {
+          value += this.getEscapedChar(escaped);
+          this.advance();
+        }
+      } else if (char === '\n') {
+        this.error("Unterminated string literal");
+      } else {
+        value += char;
+        this.advance();
+      }
+    }
+    
     return value;
   }
 
-  // Read unquoted value
+  getEscapedChar(char) {
+    switch (char) {
+      case 'n': return '\n';
+      case 't': return '\t';
+      case 'r': return '\r';
+      case '\\': return '\\';
+      case '"': return '"';
+      case "'": return "'";
+      default: return char;
+    }
+  }
+
   readUnquotedValue() {
     let value = '';
-    while (this.current() && !this.isWhitespace(this.current()) &&
-           this.current() !== '>' && this.current() !== '/' && this.current() !== '=') {
-      value += this.current();
+    while (this.position < this.length) {
+      const char = this.current();
+      if (this.isWhitespace(char) || char === '>' || char === '/' || char === '<') {
+        break;
+      }
+      value += char;
       this.advance();
     }
     return value;
   }
 
-  // Tokenize interpolation {expression}
-  tokenizeInterpolation(startLine, startColumn) {
-    const { content, line, column } = this.readEnclosedExpression('{', '}');
-    this.tokens.push(this.createToken(TokenType.INTERPOLATION, content, startLine, startColumn));
+  readDynamicValue() {
+    return this.readEnclosedExpression('{', '}');
   }
 
-  // Read text content
-  tokenizeText(startLine, startColumn) {
-    let text = '';
-    while (this.current() && this.current() !== '<' && this.current() !== '{') {
-      text += this.current();
+  readDynamicObject() {
+    const { content } = this.readEnclosedExpression('{', '}');
+    return this.createToken(TokenType.ATTRIBUTE_DYNAMIC, {
+      type: 'dynamic-object',
+      content
+    }, this.line, this.column);
+  }
+
+  skipToNextAttribute() {
+    while (this.position < this.length) {
+      const char = this.current();
+      if (this.isWhitespace(char) || char === '>' || char === '/') {
+        break;
+      }
       this.advance();
     }
-    if (text.trim()) {
+  }
+
+  // === Interpolation & Expressions ===
+  tokenizeInterpolation(startLine, startColumn) {
+    const { content } = this.readEnclosedExpression('{', '}');
+    
+    if (!content.trim()) {
+      this.error("Empty interpolation expression");
+    }
+
+    const tokenType = this.phase2 && this.isComplexExpression(content)
+      ? TokenType.EXPRESSION_COMPLEX
+      : TokenType.INTERPOLATION;
+
+    this.tokens.push(this.createToken(tokenType, content, startLine, startColumn));
+  }
+
+  isComplexExpression(content) {
+    const trimmed = content.trim();
+    return (
+      /\w\s*\(/.test(trimmed) ||           // Method calls: user.getName()
+      /[+\-*/%<>=!&|]/.test(trimmed) ||    // Operators: a + b, x > y
+      /\?\s*.*\s*:/.test(trimmed) ||       // Ternary: condition ? a : b
+      /^\s*[\[{]/.test(trimmed) ||         // Literals: [1,2,3], {key: value}
+      /&&|\|\|/.test(trimmed) ||           // Logical: a && b, x || y
+      /===|!==|==|!=|<=|>=/.test(trimmed)  // Comparisons: a === b
+    );
+  }
+
+  // === Text ===
+  tokenizeText(startLine, startColumn) {
+    let text = '';
+    
+    while (this.position < this.length) {
+      const char = this.current();
+      if (char === '<' || char === '{') {
+        break;
+      }
+      text += char;
+      this.advance();
+    }
+    
+    if (text.length > 0) {
       this.tokens.push(this.createToken(TokenType.TEXT, text, startLine, startColumn));
     }
   }
 
-  // Read expression enclosed in delimiters (e.g., { })
+  // === General Utilities ===
+  skipWhitespace() {
+    while (this.position < this.length && this.isWhitespace(this.current())) {
+      this.advance();
+    }
+  }
+
   readEnclosedExpression(open, close) {
-    if (this.current() !== open) return { content: '', line: this.line, column: this.column };
-    this.advance(); // Skip open
+    if (this.current() !== open) {
+      return { content: '', line: this.line, column: this.column };
+    }
+
+    const startLine = this.line;
+    const startColumn = this.column;
+    this.advance(); // Skip opening character
 
     let depth = 1;
     let content = '';
-    const startLine = this.line;
-    const startColumn = this.column;
+    let inString = false;
+    let stringChar = '';
 
-    while (this.position < this.input.length && depth > 0) {
+    while (this.position < this.length && depth > 0) {
       const char = this.current();
-      if (char === open) depth++;
-      if (char === close) depth--;
-      if (depth > 0) content += char;
+
+      if (!inString) {
+        if (char === '"' || char === "'") {
+          inString = true;
+          stringChar = char;
+        } else if (char === open) {
+          depth++;
+        } else if (char === close) {
+          depth--;
+        }
+      } else {
+        if (char === stringChar && this.input[this.position - 1] !== '\\') {
+          inString = false;
+          stringChar = '';
+        }
+      }
+
+      if (depth > 0) {
+        content += char;
+      }
+
       this.advance();
     }
 
-    return { content: content.trim(), line: startLine, column: startColumn };
+    if (depth > 0) {
+      this.error(`Unclosed expression: expected '${close}'`);
+    }
+
+    return {
+      content: content.trim(),
+      line: startLine,
+      column: startColumn
+    };
   }
 
-  // Create token with location
+  // === Token & Error Management ===
   createToken(type, value, line, column) {
     return {
       type,
       value,
       line,
-      column
+      column,
+      // Add source position for debugging
+      position: this.position
     };
   }
 
-  // Error with location
   error(message, line = this.line, column = this.column) {
-    throw new Error(`Lexer error at ${line}:${column} - ${message}`);
+    const context = this.getErrorContext();
+    const fullMessage = `${message}\n${context}`;
+    
+    const err = new SyntaxError(`Lexer error at ${line}:${column} - ${fullMessage}`);
+    err.location = { line, column, position: this.position };
+    err.context = context;
+    
+    throw err;
   }
 
-  // Debug tokens
+  getErrorContext() {
+    const start = Math.max(0, this.position - 30);
+    const end = Math.min(this.length, this.position + 30);
+    const before = this.input.slice(start, this.position);
+    const after = this.input.slice(this.position, end);
+    const pointer = ' '.repeat(before.length) + '^';
+    
+    return `Context: ...${before}${after}...\n         ${pointer}`;
+  }
+
   debugTokens() {
-    if (!this.debug) return;
-    console.log('FML Tokens:');
-    this.tokens.forEach((t, i) => {
-      console.log(`${i}: ${t.type} -`, JSON.stringify(t.value));
+    console.log(`=== FML Lexer Tokens (Phase ${this.phase2 ? '2' : '1'}) ===`);
+    console.log(`Total tokens: ${this.tokens.length}`);
+    
+    this.tokens.forEach((token, i) => {
+      let val;
+      if (typeof token.value === 'string') {
+        val = `"${token.value.length > 50 ? token.value.slice(0, 50) + '...' : token.value}"`;
+      } else {
+        val = JSON.stringify(token.value, null, 0);
+        if (val.length > 80) {
+          val = val.slice(0, 80) + '...';
+        }
+      }
+      
+      console.log(`${i.toString().padStart(3)}: ${token.type.padEnd(20)} @ ${token.line}:${token.column} → ${val}`);
     });
+  }
+
+  // === Recovery & Error Handling ===
+  recover() {
+    // Try to recover from errors by finding the next safe token
+    while (this.position < this.length) {
+      const char = this.current();
+      if (char === '<' || char === '}' || this.isWhitespace(char)) {
+        break;
+      }
+      this.advance();
+    }
+  }
+
+  getStats() {
+    return {
+      totalTokens: this.tokens.length,
+      errors: this.errors.length,
+      position: this.position,
+      line: this.line,
+      column: this.column,
+      phase2: this.phase2
+    };
   }
 }

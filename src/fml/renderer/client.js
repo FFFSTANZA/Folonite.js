@@ -15,6 +15,35 @@ export function renderClient(compiled, props = {}, options = {}) {
   return renderer.render(compiled);
 }
 
+/**
+ * Virtual DOM Node representation for diffing
+ */
+class VNode {
+  constructor(type, props = {}, children = [], key = null) {
+    this.type = type;
+    this.props = props;
+    this.children = Array.isArray(children) ? children : [children];
+    this.key = key;
+    this.ref = null; // Reference to actual DOM node
+    this.component = null; // Component instance if this is a component
+  }
+
+  static text(content) {
+    return new VNode('text', { content }, []);
+  }
+
+  static element(tagName, props, children) {
+    return new VNode('element', { tagName, ...props }, children);
+  }
+
+  static component(name, props, children) {
+    return new VNode('component', { name, ...props }, children);
+  }
+}
+
+/**
+ * Enhanced Client Renderer with Virtual DOM and Lifecycle Management
+ */
 class ClientRenderer {
   constructor(props = {}, options = {}) {
     this.props = props;
@@ -24,92 +53,305 @@ class ClientRenderer {
       ? document.querySelector(options.target)
       : options.target || null;
 
-    // Phase 2: Reactive state tracking
-    this.eventHandlers = new Map();        // Track event listeners for cleanup
-    this.reactiveElements = new WeakMap(); // Track reactive DOM nodes
-    this.contextStack = [];                // For nested scopes (For, If)
+    // Virtual DOM state
+    this.vdom = null;
+    this.prevVdom = null;
+    this.domNodes = new WeakMap(); // VNode -> DOM mapping
+    this.nodeVNodes = new WeakMap(); // DOM -> VNode mapping
+
+    // Enhanced reactive state tracking
+    this.eventHandlers = new Map();
+    this.reactiveElements = new WeakMap();
+    this.contextStack = [];
+    this.componentStack = [];
+
+    // Event delegation system
+    this.eventDelegator = new EventDelegator(this);
+    
+    // Component lifecycle management
+    this.componentInstances = new Map();
+    this.mountedComponents = new Set();
+    this.lifecycleQueue = [];
+    
+    // Performance monitoring
+    this.renderStats = {
+      totalRenders: 0,
+      diffTime: 0,
+      patchTime: 0,
+      lastRenderTime: 0
+    };
+
+    // Memory leak prevention
+    this.cleanupTasks = new Set();
+    this.isDestroyed = false;
+
+    // Hydration mismatch detection
+    this.hydrationMismatches = [];
+    this.isHydrating = false;
+
+    if (this.debug) {
+      this.logDebug('ClientRenderer initialized', {
+        phase2: this.phase2,
+        eventDelegation: true,
+        virtualDOM: true
+      });
+    }
   }
 
   /**
-   * Main render dispatch
+   * Main render dispatch with Virtual DOM
    */
   render(node) {
+    if (!node || this.isDestroyed) return null;
+
+    const startTime = performance.now();
+    
+    try {
+      // Convert AST to Virtual DOM
+      const vnode = this.astToVNode(node);
+      
+      // Perform diff and patch if we have previous VDOM
+      if (this.vdom && this.target) {
+        this.diff(this.vdom, vnode, this.target);
+      } else {
+        // Initial render
+        const domNode = this.renderVNode(vnode);
+        this.vdom = vnode;
+        
+        // Execute lifecycle hooks
+        this.executeLifecycleQueue();
+        
+        return domNode;
+      }
+
+      // Update stats
+      const renderTime = performance.now() - startTime;
+      this.renderStats.totalRenders++;
+      this.renderStats.lastRenderTime = renderTime;
+      
+      if (this.debug && renderTime > 16) { // Longer than 1 frame
+        this.logWarn(`Slow render detected: ${renderTime.toFixed(2)}ms`);
+      }
+
+      this.prevVdom = this.vdom;
+      this.vdom = vnode;
+      
+      return this.target;
+
+    } catch (error) {
+      this.logError('Render error:', error);
+      return this.createErrorNode(`Render failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Convert AST node to Virtual DOM node
+   */
+  astToVNode(node) {
     if (!node) return null;
 
+    switch (node.type) {
+      case 'fragment':
+        return new VNode('fragment', {}, node.children.map(child => this.astToVNode(child)).filter(Boolean));
+      
+      case 'element':
+        return VNode.element(
+          node.tagName,
+          node.attributes || {},
+          (node.children || []).map(child => this.astToVNode(child)).filter(Boolean)
+        );
+      
+      case 'component':
+        return VNode.component(
+          node.name,
+          { component: node.component, props: node.props },
+          (node.children || []).map(child => this.astToVNode(child)).filter(Boolean)
+        );
+      
+      case 'text':
+        return VNode.text(node.content);
+      
+      case 'interpolation':
+        const value = resolveExpression(node.compiled, this.getCurrentContext());
+        return VNode.text(String(value ?? ''));
+
+      // Phase 2: Control Flow
+      case 'if':
+        return this.phase2 ? this.astToVNodeIf(node) : null;
+      case 'for':
+        return this.phase2 ? this.astToVNodeFor(node) : null;
+      case 'switch':
+        return this.phase2 ? this.astToVNodeSwitch(node) : null;
+      case 'slot':
+        return this.phase2 ? this.astToVNodeSlot(node) : null;
+
+      default:
+        if (this.debug) {
+          this.logWarn(`Unknown AST node type: ${node.type}`);
+        }
+        return null;
+    }
+  }
+
+  /**
+   * Convert If directive to VNode
+   */
+  astToVNodeIf(node) {
     try {
-      switch (node.type) {
-        case 'fragment':
-          return this.renderFragment(node);
-        case 'element':
-          return this.renderElement(node);
-        case 'component':
-          return this.renderComponent(node);
-        case 'text':
-          return this.renderText(node);
-        case 'interpolation':
-          return this.renderInterpolation(node);
-
-        // Phase 2: Control Flow
-        case 'if':
-          return this.phase2 ? this.renderIf(node) : null;
-        case 'else':
-        case 'else_if':
-          return this.phase2 ? this.renderElse(node) : null;
-        case 'for':
-          return this.phase2 ? this.renderFor(node) : null;
-        case 'switch':
-          return this.phase2 ? this.renderSwitch(node) : null;
-        case 'case':
-          return this.phase2 ? this.renderCase(node) : null;
-        case 'default':
-          return this.phase2 ? this.renderDefault(node) : null;
-        case 'slot':
-          return this.phase2 ? this.renderSlot(node) : null;
-
-        default:
-          if (this.debug) {
-            console.warn(`[ClientRenderer] Unknown node type: ${node.type}`);
-          }
-          return null;
+      const condition = resolveExpression(node.condition, this.getCurrentContext());
+      if (condition) {
+        const children = (node.children || []).map(child => this.astToVNode(child)).filter(Boolean);
+        return new VNode('conditional', { condition: true }, children);
       }
+      return new VNode('conditional', { condition: false }, []);
     } catch (error) {
-      if (this.debug) {
-        console.error(`[ClientRenderer] Render error in node '${node.type}':`, error);
-      }
+      this.logError('If directive error:', error);
       return null;
     }
   }
 
   /**
-   * Render fragment (document fragment)
+   * Convert For directive to VNode
    */
-  renderFragment(node) {
-    const fragment = document.createDocumentFragment();
-    node.children.forEach(child => {
-      const el = this.render(child);
-      if (el) fragment.appendChild(el);
-    });
-    return fragment;
+  astToVNodeFor(node) {
+    try {
+      const iterable = resolveExpression(node.items || node.each, this.getCurrentContext());
+      const itemVar = node.itemVar || node.as || 'item';
+      const indexVar = node.indexVar || node.index || 'index';
+      
+      if (!iterable) return new VNode('loop', {}, []);
+
+      const items = Array.isArray(iterable) ? iterable : Object.values(iterable);
+      const children = [];
+
+      for (let i = 0; i < items.length; i++) {
+        const loopContext = {
+          ...this.getCurrentContext(),
+          [itemVar]: items[i],
+          [indexVar]: i
+        };
+
+        this.pushContext(loopContext);
+        try {
+          const itemChildren = (node.body || node.children || [])
+            .map(child => this.astToVNode(child))
+            .filter(Boolean);
+          
+          // Create wrapper with key for efficient diffing
+          const wrapper = new VNode('loop-item', { index: i }, itemChildren);
+          wrapper.key = `${itemVar}-${i}`;
+          children.push(wrapper);
+        } finally {
+          this.popContext();
+        }
+      }
+
+      return new VNode('loop', { itemVar, indexVar }, children);
+    } catch (error) {
+      this.logError('For directive error:', error);
+      return new VNode('loop', {}, []);
+    }
   }
 
   /**
-   * Render HTML element with attributes and children
+   * Convert Switch directive to VNode
    */
-  renderElement(node) {
-    const { tagName, attributes, children } = node;
+  astToVNodeSwitch(node) {
+    try {
+      const value = resolveExpression(node.value, this.getCurrentContext());
+      let matched = false;
+      let children = [];
+
+      for (const child of (node.cases || node.children || [])) {
+        if (child.type === 'case' && !matched) {
+          const caseValue = resolveExpression(child.value, this.getCurrentContext());
+          if (value === caseValue) {
+            matched = true;
+            children = (child.children || []).map(c => this.astToVNode(c)).filter(Boolean);
+            break;
+          }
+        } else if (child.type === 'default' && !matched) {
+          children = (child.children || []).map(c => this.astToVNode(c)).filter(Boolean);
+          break;
+        }
+      }
+
+      return new VNode('switch', { value, matched }, children);
+    } catch (error) {
+      this.logError('Switch directive error:', error);
+      return new VNode('switch', {}, []);
+    }
+  }
+
+  /**
+   * Convert Slot directive to VNode
+   */
+  astToVNodeSlot(node) {
+    const children = (node.children || []).map(child => this.astToVNode(child)).filter(Boolean);
+    return new VNode('slot', { name: node.name || 'default' }, children);
+  }
+
+  /**
+   * Render VNode to actual DOM
+   */
+  renderVNode(vnode) {
+    if (!vnode) return null;
+
+    let domNode = null;
+
+    switch (vnode.type) {
+      case 'text':
+        domNode = document.createTextNode(vnode.props.content || '');
+        break;
+
+      case 'element':
+        domNode = this.renderElement(vnode);
+        break;
+
+      case 'component':
+        domNode = this.renderComponent(vnode);
+        break;
+
+      case 'fragment':
+      case 'conditional':
+      case 'loop':
+      case 'loop-item':
+      case 'switch':
+      case 'slot':
+        domNode = this.renderContainer(vnode);
+        break;
+
+      default:
+        if (this.debug) {
+          this.logWarn(`Unknown VNode type: ${vnode.type}`);
+        }
+        return null;
+    }
+
+    if (domNode) {
+      this.domNodes.set(vnode, domNode);
+      this.nodeVNodes.set(domNode, vnode);
+      vnode.ref = domNode;
+    }
+
+    return domNode;
+  }
+
+  /**
+   * Render element VNode
+   */
+  renderElement(vnode) {
+    const { tagName, ...attributes } = vnode.props;
     const element = document.createElement(tagName);
 
+    // Set attributes
     this.setAttributes(element, attributes);
-    children.forEach(child => {
-      const rendered = this.render(child);
-      if (rendered) {
-        if (rendered.nodeType) {
-          element.appendChild(rendered);
-        } else if (typeof rendered === 'string') {
-          element.insertAdjacentHTML('beforeend', rendered);
-        } else if (rendered instanceof DocumentFragment) {
-          element.appendChild(rendered);
-        }
+
+    // Render children
+    vnode.children.forEach(child => {
+      const childNode = this.renderVNode(child);
+      if (childNode) {
+        element.appendChild(childNode);
       }
     });
 
@@ -117,286 +359,331 @@ class ClientRenderer {
   }
 
   /**
-   * Render component (function call)
+   * Render component VNode with lifecycle
    */
-  renderComponent(node) {
-    const { name, component, props: rawProps, children } = node;
-
+  renderComponent(vnode) {
+    const { name, component, props: rawProps } = vnode.props;
+    
     if (!component || typeof component !== 'function') {
-      if (this.debug) {
-        console.error(`Component "${name}" is not a valid function`);
-        return this.createErrorNode(`Component "${name}" not found`);
-      }
-      throw new Error(`Component "${name}" is not a valid function`);
+      this.logError(`Component "${name}" is not a valid function`);
+      return this.createErrorNode(`Component "${name}" not found`);
     }
 
-    if (this.componentStack?.includes?.(name)) {
-      throw new Error(`Circular component reference: ${name}`);
+    // Check for circular reference
+    if (this.componentStack.includes(name)) {
+      throw new Error(`Circular component reference: ${this.componentStack.join(' -> ')} -> ${name}`);
     }
+
+    this.componentStack.push(name);
 
     try {
-      const evaluatedProps = this.evaluateProps(rawProps);
+      // Create component instance
+      const instance = {
+        name,
+        props: this.evaluateProps(rawProps),
+        state: {},
+        mounted: false,
+        vnode,
+        hooks: {
+          beforeMount: [],
+          mounted: [],
+          beforeUpdate: [],
+          updated: [],
+          beforeUnmount: [],
+          unmounted: []
+        }
+      };
 
-      if (children && children.length > 0) {
-        evaluatedProps.children = children.map(child => this.renderToString(child)).join('');
+      // Add children as props
+      if (vnode.children && vnode.children.length > 0) {
+        instance.props.children = vnode.children
+          .map(child => this.renderVNodeToString(child))
+          .join('');
       }
 
-      let result = component(evaluatedProps);
+      // Store instance
+      this.componentInstances.set(vnode, instance);
+      
+      // Execute beforeMount hooks
+      this.executeHooks(instance, 'beforeMount');
+
+      // Render component
+      const result = component(instance.props);
+      let domNode;
 
       if (typeof result === 'string') {
         const temp = document.createElement('div');
         temp.innerHTML = result.trim();
-        this.hydrateElement(temp); // Bind events from SSR
-        return temp.children.length === 1 ? temp.firstElementChild : temp;
+        
+        // Hydrate events
+        this.hydrateElement(temp);
+        
+        domNode = temp.children.length === 1 ? temp.firstElementChild : temp;
+      } else if (result && result.nodeType) {
+        domNode = result;
+      } else {
+        domNode = this.createErrorNode(`Invalid component return: ${name}`);
       }
 
-      return result || null;
-    } catch (error) {
-      if (this.debug) {
-        console.error(`[ClientRenderer] Failed to render component <${name}>:`, error);
-      }
-      return this.createErrorNode(`Render failed: ${name}`);
-    }
-  }
-
-  /**
-   * Create a safe error node
-   */
-  createErrorNode(message) {
-    const el = document.createElement('div');
-    el.className = 'fml-error';
-    el.textContent = message;
-    return el;
-  }
-
-  /**
-   * Render text node
-   */
-  renderText(node) {
-    return document.createTextNode(node.content);
-  }
-
-  /**
-   * Render interpolation with reactivity
-   */
-  renderInterpolation(node) {
-    try {
-      const value = resolveExpression(node.compiled, this.getCurrentContext());
-      const textNode = document.createTextNode(String(value ?? ''));
-
-      // Phase 2: Make reactive
-      if (this.phase2) {
-        this.reactiveElements.set(textNode, {
-          type: 'interpolation',
-          compiled: node.compiled
-        });
-      }
-
-      return textNode;
-    } catch (error) {
-      if (this.debug) {
-        console.error(`[ClientRenderer] Interpolation error:`, error);
-      }
-      return document.createTextNode('[Error]');
-    }
-  }
-
-  // === Phase 2: Control Flow Rendering ===
-
-  /**
-   * Render <If> block with reactive container
-   */
-  renderIf(node) {
-    const container = document.createElement('template');
-    container.setAttribute('data-fml-if', '');
-
-    try {
-      const condition = resolveExpression(node.condition, this.getCurrentContext());
-      if (condition) {
-        const fragment = document.createDocumentFragment();
-        node.children.forEach(child => {
-          const el = this.render(child);
-          if (el) fragment.appendChild(el);
-        });
-        container.content.appendChild(fragment);
-      }
-
-      // Track for updates
-      if (this.phase2) {
-        this.reactiveElements.set(container, {
-          type: 'if',
-          condition: node.condition,
-          children: node.children
-        });
-      }
-
-      return container;
-    } catch (error) {
-      if (this.debug) {
-        console.error(`[ClientRenderer] If error:`, error);
-      }
-      return container;
-    }
-  }
-
-  /**
-   * Render <Else> / <ElseIf> (handled by parent logic)
-   */
-  renderElse(node) {
-    const fragment = document.createDocumentFragment();
-    node.children.forEach(child => {
-      const el = this.render(child);
-      if (el) fragment.appendChild(el);
-    });
-    return fragment;
-  }
-
-  /**
-   * Render <For> loop with reactive container
-   */
-  renderFor(node) {
-    const container = document.createElement('template');
-    container.setAttribute('data-fml-for', node.itemName);
-
-    try {
-      const iterable = resolveExpression(node.iterable, this.getCurrentContext());
-      const items = Array.isArray(iterable) || typeof iterable === 'string'
-        ? iterable
-        : Object.values(iterable || {});
-
-      const fragment = document.createDocumentFragment();
-
-      Array.from(items).forEach((item, index) => {
-        const loopContext = {
-          ...this.getCurrentContext(),
-          [node.itemName]: item,
-          [node.indexName || 'index']: index
-        };
-
-        this.pushContext(loopContext);
-        try {
-          const itemFragment = document.createDocumentFragment();
-          node.children.forEach(child => {
-            const el = this.render(child);
-            if (el) itemFragment.appendChild(el);
-          });
-          fragment.appendChild(itemFragment);
-        } finally {
-          this.popContext();
-        }
+      // Schedule mounted hook
+      this.lifecycleQueue.push(() => {
+        instance.mounted = true;
+        this.mountedComponents.add(instance);
+        this.executeHooks(instance, 'mounted');
       });
 
-      container.content.appendChild(fragment);
+      return domNode;
 
-      // Make reactive
-      if (this.phase2) {
-        this.reactiveElements.set(container, {
-          type: 'for',
-          iterable: node.iterable,
-          itemName: node.itemName,
-          indexName: node.indexName,
-          children: node.children
-        });
-      }
-
-      return container;
     } catch (error) {
-      if (this.debug) {
-        console.error(`[ClientRenderer] For error:`, error);
-      }
-      return container;
+      this.logError(`Component render failed: ${name}`, error);
+      return this.createErrorNode(`Render failed: ${name}`);
+    } finally {
+      this.componentStack.pop();
     }
   }
 
   /**
-   * Render <Switch> block
+   * Render container (fragment, conditional, loop, etc.)
    */
-  renderSwitch(node) {
-    const container = document.createElement('template');
-    container.setAttribute('data-fml-switch', '');
-
-    try {
-      const value = resolveExpression(node.value, this.getCurrentContext());
-      let matched = false;
-
-      const fragment = document.createDocumentFragment();
-
-      for (const child of node.children) {
-        if (child.type === 'case' && !matched) {
-          const caseValue = resolveExpression(child.value, this.getCurrentContext());
-          if (value === caseValue) {
-            matched = true;
-            child.children.forEach(c => {
-              const el = this.render(c);
-              if (el) fragment.appendChild(el);
-            });
-          }
-        } else if (child.type === 'default' && !matched) {
-          child.children.forEach(c => {
-            const el = this.render(c);
-            if (el) fragment.appendChild(el);
-          });
-        }
-      }
-
-      container.content.appendChild(fragment);
-
-      // Make reactive
-      if (this.phase2) {
-        this.reactiveElements.set(container, {
-          type: 'switch',
-          value: node.value,
-          cases: node.children
-        });
-      }
-
-      return container;
-    } catch (error) {
-      if (this.debug) {
-        console.error(`[ClientRenderer] Switch error:`, error);
-      }
-      return container;
-    }
-  }
-
-  /**
-   * Render <Case> / <Default> / <Slot>
-   */
-  renderCase(node) {
-    return this.renderChildrenToFragment(node.children);
-  }
-
-  renderDefault(node) {
-    return this.renderChildrenToFragment(node.children);
-  }
-
-  renderSlot(node) {
-    return this.renderChildrenToFragment(node.children);
-  }
-
-  // === Utilities ===
-
-  renderChildrenToFragment(children) {
+  renderContainer(vnode) {
     const fragment = document.createDocumentFragment();
-    children.forEach(child => {
-      const el = this.render(child);
-      if (el) fragment.appendChild(el);
+    
+    // Add container marker for debugging
+    if (this.debug) {
+      const comment = document.createComment(`FML-${vnode.type}`);
+      fragment.appendChild(comment);
+    }
+
+    vnode.children.forEach(child => {
+      const childNode = this.renderVNode(child);
+      if (childNode) {
+        fragment.appendChild(childNode);
+      }
     });
+
     return fragment;
   }
 
   /**
-   * Set element attributes and bind events
+   * Virtual DOM Diffing Algorithm
+   */
+  diff(oldVNode, newVNode, parentDOM) {
+    const startTime = performance.now();
+
+    try {
+      this.diffNode(oldVNode, newVNode, parentDOM, 0);
+      
+      const diffTime = performance.now() - startTime;
+      this.renderStats.diffTime += diffTime;
+      
+      if (this.debug && diffTime > 8) {
+        this.logWarn(`Slow diff detected: ${diffTime.toFixed(2)}ms`);
+      }
+    } catch (error) {
+      this.logError('Diff error:', error);
+    }
+  }
+
+  /**
+   * Diff individual nodes
+   */
+  diffNode(oldVNode, newVNode, parentDOM, index) {
+    const oldDOM = oldVNode ? this.domNodes.get(oldVNode) : null;
+
+    // Node removed
+    if (!newVNode) {
+      if (oldDOM && parentDOM.contains(oldDOM)) {
+        this.unmountNode(oldVNode);
+        parentDOM.removeChild(oldDOM);
+      }
+      return;
+    }
+
+    // Node added
+    if (!oldVNode) {
+      const newDOM = this.renderVNode(newVNode);
+      if (newDOM) {
+        if (index < parentDOM.childNodes.length) {
+          parentDOM.insertBefore(newDOM, parentDOM.childNodes[index]);
+        } else {
+          parentDOM.appendChild(newDOM);
+        }
+      }
+      return;
+    }
+
+    // Node type changed - replace
+    if (oldVNode.type !== newVNode.type || 
+        (oldVNode.type === 'element' && oldVNode.props.tagName !== newVNode.props.tagName)) {
+      const newDOM = this.renderVNode(newVNode);
+      if (newDOM && oldDOM) {
+        this.unmountNode(oldVNode);
+        parentDOM.replaceChild(newDOM, oldDOM);
+      }
+      return;
+    }
+
+    // Same node type - update
+    this.updateNode(oldVNode, newVNode, oldDOM);
+  }
+
+  /**
+   * Update existing node
+   */
+  updateNode(oldVNode, newVNode, domNode) {
+    if (!domNode) return;
+
+    // Update DOM mapping
+    this.domNodes.set(newVNode, domNode);
+    this.nodeVNodes.set(domNode, newVNode);
+    newVNode.ref = domNode;
+
+    switch (newVNode.type) {
+      case 'text':
+        if (oldVNode.props.content !== newVNode.props.content) {
+          domNode.textContent = newVNode.props.content || '';
+        }
+        break;
+
+      case 'element':
+        this.updateElementNode(oldVNode, newVNode, domNode);
+        break;
+
+      case 'component':
+        this.updateComponentNode(oldVNode, newVNode, domNode);
+        break;
+
+      default:
+        this.updateContainerNode(oldVNode, newVNode, domNode);
+        break;
+    }
+  }
+
+  /**
+   * Update element node
+   */
+  updateElementNode(oldVNode, newVNode, element) {
+    // Update attributes
+    this.updateAttributes(element, oldVNode.props, newVNode.props);
+
+    // Diff children
+    this.diffChildren(oldVNode.children, newVNode.children, element);
+  }
+
+  /**
+   * Update component node
+   */
+  updateComponentNode(oldVNode, newVNode, domNode) {
+    const instance = this.componentInstances.get(oldVNode);
+    if (!instance) return;
+
+    // Update instance mapping
+    this.componentInstances.delete(oldVNode);
+    this.componentInstances.set(newVNode, instance);
+    instance.vnode = newVNode;
+
+    // Execute beforeUpdate hooks
+    this.executeHooks(instance, 'beforeUpdate');
+
+    // Check if props changed
+    const oldProps = instance.props;
+    const newProps = this.evaluateProps(newVNode.props.props);
+    
+    if (this.propsChanged(oldProps, newProps)) {
+      instance.props = newProps;
+      
+      // Re-render component
+      const result = newVNode.props.component(newProps);
+      
+      if (typeof result === 'string' && domNode.parentNode) {
+        const temp = document.createElement('div');
+        temp.innerHTML = result.trim();
+        this.hydrateElement(temp);
+        
+        const newDOM = temp.children.length === 1 ? temp.firstElementChild : temp;
+        domNode.parentNode.replaceChild(newDOM, domNode);
+        
+        // Update mappings
+        this.domNodes.set(newVNode, newDOM);
+        this.nodeVNodes.set(newDOM, newVNode);
+        newVNode.ref = newDOM;
+      }
+    }
+
+    // Execute updated hooks
+    this.executeHooks(instance, 'updated');
+  }
+
+  /**
+   * Update container node (fragment, etc.)
+   */
+  updateContainerNode(oldVNode, newVNode, container) {
+    // For document fragments, we need to find the actual parent
+    const parentDOM = container.nodeType === Node.DOCUMENT_FRAGMENT_NODE 
+      ? container.parentNode || this.target 
+      : container;
+    
+    if (parentDOM) {
+      this.diffChildren(oldVNode.children, newVNode.children, parentDOM);
+    }
+  }
+
+  /**
+   * Diff children arrays
+   */
+  diffChildren(oldChildren, newChildren, parentDOM) {
+    const oldLen = oldChildren.length;
+    const newLen = newChildren.length;
+    const maxLen = Math.max(oldLen, newLen);
+
+    for (let i = 0; i < maxLen; i++) {
+      const oldChild = i < oldLen ? oldChildren[i] : null;
+      const newChild = i < newLen ? newChildren[i] : null;
+      
+      this.diffNode(oldChild, newChild, parentDOM, i);
+    }
+  }
+
+  /**
+   * Update element attributes
+   */
+  updateAttributes(element, oldProps, newProps) {
+    const oldAttrs = { ...oldProps };
+    const newAttrs = { ...newProps };
+    
+    // Remove tagName from comparison
+    delete oldAttrs.tagName;
+    delete newAttrs.tagName;
+
+    // Remove old attributes
+    for (const name in oldAttrs) {
+      if (!(name in newAttrs)) {
+        this.removeAttribute(element, name);
+      }
+    }
+
+    // Set new/updated attributes
+    for (const name in newAttrs) {
+      if (oldAttrs[name] !== newAttrs[name]) {
+        this.setAttributeValue(element, name, newAttrs[name]);
+      }
+    }
+  }
+
+  /**
+   * Enhanced attribute setting with event delegation
    */
   setAttributes(element, attributes = {}) {
     for (const [name, attr] of Object.entries(attributes)) {
+      if (name === 'tagName') continue;
+      
       try {
         if (attr.type === 'static') {
-          this.setStaticAttribute(element, name, attr.value);
+          this.setAttributeValue(element, name, attr.value);
         } else if (attr.type === 'dynamic') {
           const value = resolveExpression(attr.compiled, this.getCurrentContext());
           if (value !== null && value !== undefined && value !== false) {
-            this.setStaticAttribute(element, name, value);
+            this.setAttributeValue(element, name, value);
 
             // Track for reactivity
             if (this.phase2) {
@@ -406,25 +693,27 @@ class ClientRenderer {
             }
           }
         } else if (this.phase2 && attr.type === 'event') {
-          this.bindEvent(element, name, attr.compiled);
+          this.eventDelegator.bindEvent(element, name, attr.compiled);
         }
       } catch (error) {
-        if (this.debug) {
-          console.error(`[ClientRenderer] Attribute error for "${name}":`, error);
-        }
+        this.logError(`Attribute error for "${name}":`, error);
       }
     }
   }
 
-  setStaticAttribute(element, name, value) {
+  setAttributeValue(element, name, value) {
     if (value == null || value === false) return;
+    
     if (value === true) {
       element.setAttribute(name, '');
       return;
     }
 
+    // Handle special attributes
     if (name === 'className') {
       element.className = value;
+    } else if (name === 'style' && typeof value === 'object') {
+      Object.assign(element.style, value);
     } else if (name in element && typeof element[name] !== 'function') {
       element[name] = value;
     } else {
@@ -432,87 +721,159 @@ class ClientRenderer {
     }
   }
 
+  removeAttribute(element, name) {
+    if (name === 'className') {
+      element.className = '';
+    } else if (name in element && typeof element[name] !== 'function') {
+      element[name] = '';
+    } else {
+      element.removeAttribute(name);
+    }
+  }
+
   /**
-   * Bind event handler (function or safe string)
+   * Enhanced hydration with mismatch detection
    */
-  bindEvent(element, eventName, compiled) {
-    const eventType = eventName.replace(/^on/i, '').toLowerCase();
+  hydrateElement(element, expectedVNode = null) {
+    if (!this.phase2) return;
+    
+    this.isHydrating = true;
+    const mismatches = [];
 
     try {
-      const handler = resolveExpression(compiled, this.getCurrentContext());
-
-      if (typeof handler === 'function') {
-        const wrapper = (e) => {
-          e.preventDefault();
-          try {
-            handler(e);
-          } catch (err) {
-            if (this.debug) {
-              console.error(`Event handler error for ${eventName}:`, err);
-            }
+      // Hydrate events from SSR
+      const eventElements = element.querySelectorAll('[data-fml-on-click], [data-fml-on-submit], [data-fml-on-change]');
+      
+      eventElements.forEach(el => {
+        ['click', 'submit', 'change', 'input', 'focus', 'blur'].forEach(eventType => {
+          const attr = el.getAttribute(`data-fml-on-${eventType}`);
+          if (attr) {
+            this.eventDelegator.bindEvent(el, `on${eventType}`, { code: attr, safe: false });
+            el.removeAttribute(`data-fml-on-${eventType}`);
           }
-        };
+        });
+      });
 
-        element.addEventListener(eventType, wrapper);
-        const id = `${eventType}-${Date.now()}`;
-        this.eventHandlers.set(id, { element, eventType, wrapper });
+      // Check for hydration mismatches
+      if (expectedVNode && this.debug) {
+        this.detectHydrationMismatches(element, expectedVNode, mismatches);
       }
-    } catch (error) {
-      if (this.debug) {
-        console.warn(`[ClientRenderer] Could not bind event ${eventName}:`, error);
+
+    } finally {
+      this.isHydrating = false;
+      
+      if (mismatches.length > 0) {
+        this.hydrationMismatches.push(...mismatches);
+        this.logWarn(`Hydration mismatches detected: ${mismatches.length}`);
+        if (this.debug) {
+          console.table(mismatches);
+        }
       }
     }
   }
 
   /**
-   * Hydrate server-rendered HTML with event listeners
+   * Detect hydration mismatches
    */
-  hydrateElement(element) {
-    if (!this.phase2) return;
+  detectHydrationMismatches(domNode, vnode, mismatches) {
+    if (domNode.nodeType === Node.TEXT_NODE) {
+      if (vnode.type === 'text' && domNode.textContent !== vnode.props.content) {
+        mismatches.push({
+          type: 'text-mismatch',
+          expected: vnode.props.content,
+          actual: domNode.textContent,
+          node: domNode
+        });
+      }
+    } else if (domNode.nodeType === Node.ELEMENT_NODE) {
+      if (vnode.type === 'element' && domNode.tagName.toLowerCase() !== vnode.props.tagName) {
+        mismatches.push({
+          type: 'tag-mismatch',
+          expected: vnode.props.tagName,
+          actual: domNode.tagName.toLowerCase(),
+          node: domNode
+        });
+      }
+    }
+  }
 
-    const els = element.querySelectorAll('[data-fml-on-click], [data-fml-on-submit], [data-fml-on-change], [data-fml-on-*]');
-    els.forEach(el => {
-      ['click', 'submit', 'change', 'input', 'focus', 'blur'].forEach(eventType => {
-        const attr = el.getAttribute(`data-fml-on-${eventType}`);
-        if (attr) {
-          this.bindEvent(el, `on${eventType}`, { code: attr, safe: false });
-          el.removeAttribute(`data-fml-on-${eventType}`);
+  /**
+   * Component lifecycle management
+   */
+  executeLifecycleQueue() {
+    while (this.lifecycleQueue.length > 0) {
+      const hook = this.lifecycleQueue.shift();
+      try {
+        hook();
+      } catch (error) {
+        this.logError('Lifecycle hook error:', error);
+      }
+    }
+  }
+
+  executeHooks(instance, hookName) {
+    if (instance.hooks[hookName]) {
+      instance.hooks[hookName].forEach(hook => {
+        try {
+          hook();
+        } catch (error) {
+          this.logError(`Hook ${hookName} error in ${instance.name}:`, error);
         }
       });
-    });
-  }
-
-  /**
-   * Update reactive elements when props change
-   */
-  updateProps(newProps) {
-    Object.assign(this.props, newProps);
-
-    for (const [node, config] of this.reactiveElements.entries()) {
-      try {
-        if (config.type === 'interpolation') {
-          const value = resolveExpression(config.compiled, this.getCurrentContext());
-          node.textContent = String(value ?? '');
-        } else if (config.type === 'if') {
-          const condition = resolveExpression(config.condition, this.getCurrentContext());
-          if (node.parentNode) {
-            node.style.display = condition ? '' : 'none';
-          }
-        } else if (config.type === 'for') {
-          console.warn('ClientRenderer.updateProps: For loop update not supported. Full re-render needed.');
-        } else if (config.type === 'switch') {
-          console.warn('ClientRenderer.updateProps: Switch update not supported. Full re-render needed.');
-        }
-      } catch (error) {
-        if (this.debug) {
-          console.error(`[ClientRenderer] Update error:`, error);
-        }
-      }
     }
   }
 
   /**
-   * Context stack for nested scopes
+   * Unmount node and cleanup
+   */
+  unmountNode(vnode) {
+    if (!vnode) return;
+
+    // Unmount component
+    if (vnode.type === 'component') {
+      const instance = this.componentInstances.get(vnode);
+      if (instance) {
+        this.executeHooks(instance, 'beforeUnmount');
+        this.mountedComponents.delete(instance);
+        this.componentInstances.delete(vnode);
+        this.executeHooks(instance, 'unmounted');
+      }
+    }
+
+    // Recursively unmount children
+    if (vnode.children) {
+      vnode.children.forEach(child => this.unmountNode(child));
+    }
+
+    // Cleanup DOM mappings
+    const domNode = this.domNodes.get(vnode);
+    if (domNode) {
+      this.domNodes.delete(vnode);
+      this.nodeVNodes.delete(domNode);
+      this.eventDelegator.cleanupNode(domNode);
+    }
+  }
+
+  /**
+   * Check if props changed
+   */
+  propsChanged(oldProps, newProps) {
+    const oldKeys = Object.keys(oldProps);
+    const newKeys = Object.keys(newProps);
+    
+    if (oldKeys.length !== newKeys.length) return true;
+    
+    for (const key of oldKeys) {
+      if (oldProps[key] !== newProps[key]) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Context stack management
    */
   getCurrentContext() {
     if (this.contextStack.length === 0) return this.props;
@@ -530,29 +891,88 @@ class ClientRenderer {
   }
 
   /**
-   * Render node to string (for component children)
+   * Enhanced reactive updates
    */
-  renderToString(node) {
-    switch (node.type) {
+  updateProps(newProps) {
+    if (this.isDestroyed) return;
+
+    const oldProps = { ...this.props };
+    Object.assign(this.props, newProps);
+
+    // Check if any reactive elements need updates
+    for (const [node, config] of this.reactiveElements.entries()) {
+      try {
+        if (config.type === 'interpolation') {
+          const value = resolveExpression(config.compiled, this.getCurrentContext());
+          if (node.textContent !== String(value ?? '')) {
+            node.textContent = String(value ?? '');
+          }
+        }
+        
+        // Handle dynamic attributes
+        for (const [key, compiled] of Object.entries(config)) {
+          if (key.startsWith('attr:')) {
+            const attrName = key.substring(5);
+            const newValue = resolveExpression(compiled, this.getCurrentContext());
+            const element = node;
+            
+            if (element.getAttribute && element.getAttribute(attrName) !== String(newValue)) {
+              this.setAttributeValue(element, attrName, newValue);
+            }
+          }
+        }
+      } catch (error) {
+        this.logError('Reactive update error:', error);
+      }
+    }
+
+    // Trigger full re-render if props significantly changed
+    if (this.shouldFullRerender(oldProps, newProps)) {
+      this.render(this.vdom);
+    }
+  }
+
+  shouldFullRerender(oldProps, newProps) {
+    // Simple heuristic - can be made more sophisticated
+    const criticalKeys = ['user', 'data', 'config'];
+    return criticalKeys.some(key => oldProps[key] !== newProps[key]);
+  }
+
+  /**
+   * Utility methods
+   */
+  createErrorNode(message) {
+    const el = document.createElement('div');
+    el.className = 'fml-error';
+    el.style.cssText = 'color: red; border: 1px solid red; padding: 8px; margin: 4px;';
+    el.textContent = message;
+    return el;
+  }
+
+  renderVNodeToString(vnode) {
+    // Simplified string rendering for component children
+    if (!vnode) return '';
+    
+    switch (vnode.type) {
       case 'text':
-        return escapeHtml(node.content);
-      case 'interpolation':
-        const value = resolveExpression(node.compiled, this.getCurrentContext());
-        return escapeHtml(String(value ?? ''));
+        return escapeHtml(vnode.props.content || '');
       case 'element':
-        const attrs = this.renderAttributesToString(node.attributes);
-        const children = (node.children || []).map(c => this.renderToString(c)).join('');
-        return this.isSelfClosingTag(node.tagName)
-          ? `<${node.tagName}${attrs} />`
-          : `<${node.tagName}${attrs}>${children}</${node.tagName}>`;
+        const { tagName, ...attrs } = vnode.props;
+        const attrStr = this.renderAttributesToString(attrs);
+        const childrenStr = vnode.children.map(child => this.renderVNodeToString(child)).join('');
+        return this.isSelfClosingTag(tagName)
+          ? `<${tagName}${attrStr} />`
+          : `<${tagName}${attrStr}>${childrenStr}</${tagName}>`;
       default:
-        return '';
+        return vnode.children.map(child => this.renderVNodeToString(child)).join('');
     }
   }
 
   renderAttributesToString(attrs = {}) {
     const parts = [];
     for (const [name, attr] of Object.entries(attrs)) {
+      if (name === 'tagName') continue;
+      
       try {
         if (attr.type === 'static') {
           const val = escapeAttribute(String(attr.value));
@@ -564,8 +984,8 @@ class ClientRenderer {
             parts.push(value === true ? name : `${name}="${val}"`);
           }
         }
-      } catch (e) {
-        if (this.debug) console.warn(`Attr stringify error: ${name}`, e);
+      } catch (error) {
+        if (this.debug) this.logWarn(`Attr stringify error: ${name}`, error);
       }
     }
     return parts.length ? ' ' + parts.join(' ') : '';
@@ -579,9 +999,7 @@ class ClientRenderer {
           ? prop.value
           : resolveExpression(prop.compiled, this.getCurrentContext());
       } catch (error) {
-        if (this.debug) {
-          console.error(`[ClientRenderer] Prop eval error for "${name}":`, error);
-        }
+        this.logError(`Prop eval error for "${name}":`, error);
         evaluated[name] = undefined;
       }
     }
@@ -593,24 +1011,240 @@ class ClientRenderer {
   }
 
   /**
-   * Cleanup all event listeners
+   * Logging utilities
+   */
+  logDebug(message, data = null) {
+    if (this.debug) {
+      console.log(`[FML-Client] ${message}`, data || '');
+    }
+  }
+
+  logWarn(message, data = null) {
+    console.warn(`[FML-Client] ${message}`, data || '');
+  }
+
+  logError(message, error) {
+    console.error(`[FML-Client] ${message}`, error);
+  }
+
+  /**
+   * Performance and memory monitoring
+   */
+  getPerformanceStats() {
+    return {
+      totalRenders: this.renderStats.totalRenders,
+      averageRenderTime: this.renderStats.totalRenders > 0 
+        ? (this.renderStats.diffTime + this.renderStats.patchTime) / this.renderStats.totalRenders 
+        : 0,
+      lastRenderTime: this.renderStats.lastRenderTime,
+      diffTime: this.renderStats.diffTime,
+      patchTime: this.renderStats.patchTime,
+      componentCount: this.componentInstances.size,
+      mountedComponents: this.mountedComponents.size,
+      eventHandlers: this.eventHandlers.size,
+      hydrationMismatches: this.hydrationMismatches.length,
+      memoryFootprint: this.getMemoryFootprint()
+    };
+  }
+
+  getMemoryFootprint() {
+    return {
+      vdomNodes: this.domNodes.size,
+      reactiveElements: this.getReactiveElementsCount(),
+      eventHandlers: this.eventHandlers.size,
+      componentInstances: this.componentInstances.size
+    };
+  }
+
+  getReactiveElementsCount() {
+    let count = 0;
+    // WeakMap doesn't have size, so we can't easily count
+    // This is an approximation based on tracked components
+    return this.mountedComponents.size * 2; // Rough estimate
+  }
+
+  /**
+   * Complete cleanup and destruction
    */
   destroy() {
-    for (const { element, eventType, wrapper } of this.eventHandlers.values()) {
+    if (this.isDestroyed) return;
+    
+    this.logDebug('Destroying ClientRenderer');
+    
+    // Unmount all components
+    for (const instance of this.mountedComponents) {
+      this.executeHooks(instance, 'beforeUnmount');
+      this.executeHooks(instance, 'unmounted');
+    }
+    
+    // Cleanup event handlers
+    this.eventDelegator.destroy();
+    
+    // Clear all maps and sets
+    this.eventHandlers.clear();
+    this.componentInstances.clear();
+    this.mountedComponents.clear();
+    this.lifecycleQueue.length = 0;
+    this.contextStack.length = 0;
+    this.componentStack.length = 0;
+    
+    // Clear DOM mappings
+    this.domNodes = new WeakMap();
+    this.nodeVNodes = new WeakMap();
+    this.reactiveElements = new WeakMap();
+    
+    // Execute cleanup tasks
+    for (const cleanup of this.cleanupTasks) {
       try {
-        element.removeEventListener(eventType, wrapper);
-      } catch (e) {
-        if (this.debug) console.warn('Cleanup error:', e);
+        cleanup();
+      } catch (error) {
+        this.logError('Cleanup task error:', error);
       }
     }
-    this.eventHandlers.clear();
-    this.reactiveElements = new WeakMap();
-    this.contextStack = [];
+    this.cleanupTasks.clear();
+    
+    this.isDestroyed = true;
   }
 }
 
 /**
- * Mount FML to DOM with lifecycle control
+ * Enhanced Event Delegation System
+ */
+class EventDelegator {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.eventMap = new Map(); // element -> { eventType -> handler }
+    this.delegatedEvents = new Set(['click', 'submit', 'change', 'input']);
+    this.rootHandlers = new Map(); // eventType -> handler
+    
+    this.setupRootDelegation();
+  }
+
+  setupRootDelegation() {
+    if (typeof document === 'undefined') return;
+    
+    this.delegatedEvents.forEach(eventType => {
+      const handler = (event) => this.handleDelegatedEvent(event);
+      document.addEventListener(eventType, handler, true);
+      this.rootHandlers.set(eventType, handler);
+    });
+  }
+
+  handleDelegatedEvent(event) {
+    let target = event.target;
+    
+    // Traverse up the DOM tree to find handlers
+    while (target && target !== document) {
+      const handlers = this.eventMap.get(target);
+      if (handlers && handlers[event.type]) {
+        try {
+          const result = handlers[event.type](event);
+          if (result === false || event.defaultPrevented) {
+            break;
+          }
+        } catch (error) {
+          this.renderer.logError(`Delegated event error (${event.type}):`, error);
+        }
+      }
+      target = target.parentNode;
+    }
+  }
+
+  bindEvent(element, eventName, compiled) {
+    const eventType = eventName.replace(/^on/i, '').toLowerCase();
+    
+    try {
+      const handler = resolveExpression(compiled, this.renderer.getCurrentContext());
+      
+      if (typeof handler === 'function') {
+        if (!this.eventMap.has(element)) {
+          this.eventMap.set(element, {});
+        }
+        
+        const wrapper = (e) => {
+          try {
+            return handler(e);
+          } catch (err) {
+            this.renderer.logError(`Event handler error for ${eventName}:`, err);
+          }
+        };
+        
+        this.eventMap.get(element)[eventType] = wrapper;
+        
+        // For non-delegated events, bind directly
+        if (!this.delegatedEvents.has(eventType)) {
+          element.addEventListener(eventType, wrapper);
+          
+          // Track for cleanup
+          const id = `${eventType}-${Date.now()}-${Math.random()}`;
+          this.renderer.eventHandlers.set(id, { element, eventType, wrapper });
+        }
+      }
+    } catch (error) {
+      this.renderer.logError(`Could not bind event ${eventName}:`, error);
+    }
+  }
+
+  cleanupNode(element) {
+    // Remove from event map
+    this.eventMap.delete(element);
+    
+    // Remove direct event listeners
+    for (const [id, { element: el, eventType, wrapper }] of this.renderer.eventHandlers.entries()) {
+      if (el === element) {
+        try {
+          el.removeEventListener(eventType, wrapper);
+          this.renderer.eventHandlers.delete(id);
+        } catch (error) {
+          this.renderer.logError('Event cleanup error:', error);
+        }
+      }
+    }
+  }
+
+  destroy() {
+    // Remove root delegation handlers
+    this.rootHandlers.forEach((handler, eventType) => {
+      document.removeEventListener(eventType, handler, true);
+    });
+    
+    this.rootHandlers.clear();
+    this.eventMap.clear();
+    this.delegatedEvents.clear();
+  }
+}
+
+/**
+ * Component Lifecycle Hooks API
+ */
+export class ComponentLifecycle {
+  static beforeMount(instance, callback) {
+    instance.hooks.beforeMount.push(callback);
+  }
+
+  static mounted(instance, callback) {
+    instance.hooks.mounted.push(callback);
+  }
+
+  static beforeUpdate(instance, callback) {
+    instance.hooks.beforeUpdate.push(callback);
+  }
+
+  static updated(instance, callback) {
+    instance.hooks.updated.push(callback);
+  }
+
+  static beforeUnmount(instance, callback) {
+    instance.hooks.beforeUnmount.push(callback);
+  }
+
+  static unmounted(instance, callback) {
+    instance.hooks.unmounted.push(callback);
+  }
+}
+
+/**
+ * Enhanced mount function with lifecycle control
  */
 export function mountFML(compiled, target, props = {}, options = {}) {
   const renderer = new ClientRenderer(props, options);
@@ -620,12 +1254,14 @@ export function mountFML(compiled, target, props = {}, options = {}) {
     const el = typeof target === 'string' ? document.querySelector(target) : target;
     if (el) {
       if (options.hydrate) {
-        el.replaceChildren(dom);
-        renderer.hydrateElement(el);
+        renderer.hydrateElement(el, compiled);
+        renderer.vdom = renderer.astToVNode(compiled);
       } else {
         el.innerHTML = '';
         el.appendChild(dom);
       }
+      
+      renderer.target = el;
     }
   }
 
@@ -633,13 +1269,94 @@ export function mountFML(compiled, target, props = {}, options = {}) {
     dom,
     renderer,
     update: (newProps) => renderer.updateProps(newProps),
-    destroy: () => renderer.destroy()
+    destroy: () => renderer.destroy(),
+    getStats: () => renderer.getPerformanceStats(),
+    
+    // Lifecycle management
+    onBeforeMount: (callback) => renderer.lifecycleQueue.push(callback),
+    onMounted: (callback) => renderer.lifecycleQueue.push(callback),
+    
+    // Development helpers
+    debug: {
+      getVDOM: () => renderer.vdom,
+      getHydrationMismatches: () => renderer.hydrationMismatches,
+      forceRerender: () => renderer.render(renderer.vdom)
+    }
   };
 }
 
 /**
- * Hydrate server-rendered FML content
+ * Enhanced hydration with better mismatch detection
  */
 export function hydrateFML(target, compiled, props = {}, options = {}) {
-  return mountFML(compiled, target, props, { ...options, hydrate: true });
+  return mountFML(compiled, target, props, { 
+    ...options, 
+    hydrate: true,
+    debug: options.debug || false
+  });
 }
+
+/**
+ * Create reactive FML instance with lifecycle management
+ */
+export function createReactiveFML(compiled, initialProps = {}, options = {}) {
+  let instance = null;
+  let isDestroyed = false;
+  
+  return {
+    mount(target, mountOptions = {}) {
+      if (isDestroyed) throw new Error('Cannot mount destroyed reactive instance');
+      
+      instance = mountFML(compiled, target, initialProps, {
+        ...options,
+        ...mountOptions,
+        phase2: true
+      });
+      
+      return instance;
+    },
+
+    update(newProps) {
+      if (instance && !isDestroyed) {
+        instance.update(newProps);
+      }
+      return this;
+    },
+
+    getProps() {
+      return instance ? instance.renderer.props : initialProps;
+    },
+
+    getStats() {
+      return instance ? instance.getStats() : null;
+    },
+
+    destroy() {
+      if (instance) {
+        instance.destroy();
+        instance = null;
+      }
+      isDestroyed = true;
+    },
+
+    get isDestroyed() {
+      return isDestroyed;
+    },
+
+    get isMounted() {
+      return instance !== null && !isDestroyed;
+    }
+  };
+}
+
+export default {
+  renderClient,
+  mountFML,
+  hydrateFML,
+  createReactiveFML,
+  ComponentLifecycle,
+  ClientRenderer,
+  EventDelegator,
+  VNode
+};
+

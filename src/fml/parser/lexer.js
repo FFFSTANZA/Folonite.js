@@ -1,26 +1,47 @@
 // src/fml/parser/lexer.js
-// Enhanced FML Lexer - Robust & Powerful (Phase 1 + Phase 2)
 
 export const TokenType = {
   // Basic HTML tokens
-  TAG_OPEN: 'TAG_OPEN',           // <div>
-  TAG_CLOSE: 'TAG_CLOSE',         // </div>
-  TAG_SELF_CLOSE: 'TAG_SELF_CLOSE', // <br />
+  TAG_OPEN: 'TAG_OPEN',
+  TAG_CLOSE: 'TAG_CLOSE', 
+  TAG_SELF_CLOSE: 'TAG_SELF_CLOSE',
 
   // Content tokens
-  TEXT: 'TEXT',                   // Plain text
-  INTERPOLATION: 'INTERPOLATION', // {simple}
-  EXPRESSION_COMPLEX: 'EXPRESSION_COMPLEX', // {a + b}, {user.getName()}
+  TEXT: 'TEXT',
+  INTERPOLATION: 'INTERPOLATION',
+  EXPRESSION_COMPLEX: 'EXPRESSION_COMPLEX',
 
   // Attribute tokens
-  ATTRIBUTE_STATIC: 'ATTRIBUTE_STATIC', // name="value"
-  ATTRIBUTE_DYNAMIC: 'ATTRIBUTE_DYNAMIC', // name={value}
-  EVENT_HANDLER: 'EVENT_HANDLER',       // onClick={handler}
+  ATTRIBUTE_STATIC: 'ATTRIBUTE_STATIC',
+  ATTRIBUTE_DYNAMIC: 'ATTRIBUTE_DYNAMIC', 
+  EVENT_HANDLER: 'EVENT_HANDLER',
 
   // Special tokens
-  COMPONENT: 'COMPONENT',         // <MyComponent>
-  DIRECTIVE: 'DIRECTIVE',         // <If>, <For>, etc.
-  EOF: 'EOF',                     // End of file
+  COMPONENT: 'COMPONENT',
+  DIRECTIVE: 'DIRECTIVE',
+  EOF: 'EOF',
+};
+
+// Lexer states for state machine
+const LexerState = {
+  TEXT: 'TEXT',
+  TAG: 'TAG',
+  TAG_NAME: 'TAG_NAME',
+  ATTRIBUTES: 'ATTRIBUTES',
+  ATTRIBUTE_NAME: 'ATTRIBUTE_NAME',
+  ATTRIBUTE_VALUE: 'ATTRIBUTE_VALUE',
+  EXPRESSION: 'EXPRESSION',
+  STRING: 'STRING',
+  COMMENT: 'COMMENT',
+  ERROR_RECOVERY: 'ERROR_RECOVERY'
+};
+
+// Recovery strategies
+const RecoveryMode = {
+  SKIP_TO_TAG: 'SKIP_TO_TAG',
+  SKIP_TO_EXPRESSION_END: 'SKIP_TO_EXPRESSION_END',
+  SKIP_TO_WHITESPACE: 'SKIP_TO_WHITESPACE',
+  SKIP_CHAR: 'SKIP_CHAR'
 };
 
 // Phase 2: Built-in directives and event attributes
@@ -36,6 +57,45 @@ const EVENT_ATTRIBUTES = new Set([
   'onDoubleClick', 'onContextMenu', 'onScroll', 'onResize'
 ]);
 
+// Character class checks (optimized)
+const WHITESPACE_CHARS = new Set([' ', '\t', '\n', '\r', '\f']);
+const ALPHA_CHARS = /^[a-zA-Z]$/;
+const ALPHANUM_CHARS = /^[a-zA-Z0-9]$/;
+const TAG_NAME_CHARS = /^[a-zA-Z0-9\-_]$/;
+const ATTR_NAME_CHARS = /^[a-zA-Z0-9\-_:]$/;
+
+// Expression complexity detection using AST patterns
+class ExpressionAnalyzer {
+  static analyzeComplexity(content) {
+    const trimmed = content.trim();
+    if (!trimmed) return false;
+
+    // Check for simple property access first (fast path)
+    if (/^[a-zA-Z_$][\w$]*(\.[a-zA-Z_$][\w$]*)*$/.test(trimmed)) {
+      return false;
+    }
+
+    // Check for literals
+    if (/^(true|false|null|undefined|\d+(\.\d+)?|"[^"]*"|'[^']*')$/.test(trimmed)) {
+      return false;
+    }
+
+    // More sophisticated pattern matching
+    const complexPatterns = [
+      /\w\s*\(/,                    // Function calls
+      /[+\-*/%<>=!&|]{1,2}/,       // Operators
+      /\?\s*[^:]*\s*:/,            // Ternary
+      /^\s*[\[{]/,                 // Object/array literals
+      /&&|\|\|/,                   // Logical operators
+      /[!=<>]==/,                  // Comparison operators
+      /\.[a-zA-Z_$][\w$]*\s*\(/,  // Method calls
+      /\[[^\]]+\]/                 // Array access
+    ];
+
+    return complexPatterns.some(pattern => pattern.test(trimmed));
+  }
+}
+
 export class FMLLexer {
   constructor(input, options = {}) {
     this.input = input;
@@ -43,87 +103,308 @@ export class FMLLexer {
     this.position = 0;
     this.line = 1;
     this.column = 1;
+    this.startPosition = 0; // Token start position
     this.debug = !!options.debug;
     this.phase2 = options.phase2 !== false;
+    
+    // State machine
+    this.state = LexerState.TEXT;
+    this.stateStack = [];
+    
+    // Performance tracking
+    this.stats = {
+      tokensProcessed: 0,
+      totalTime: 0,
+      errorRecoveries: 0,
+      startTime: 0
+    };
+    
+    // Error handling
     this.tokens = [];
     this.errors = [];
+    this.warnings = [];
+    this.maxErrors = options.maxErrors || 10;
+    
+    // Recovery tracking
+    this.lastRecoveryPosition = -1;
+    this.recoveryAttempts = 0;
+    this.maxRecoveryAttempts = 5;
   }
 
   tokenize() {
-    this.tokens = [];
-    this.errors = [];
-    this.position = 0;
-    this.line = 1;
-    this.column = 1;
+    this.stats.startTime = performance.now();
+    this.reset();
 
     try {
-      while (this.position < this.length) {
-        if (this.tokenizeNext()) {
-          continue;
-        }
+      while (this.position < this.length && this.errors.length < this.maxErrors) {
+        const tokenized = this.processCurrentState();
         
-        // If we get here, we couldn't tokenize anything - advance to prevent infinite loop
-        const char = this.current();
-        if (char) {
-          this.error(`Unexpected character: '${char}'`);
+        if (!tokenized) {
+          if (!this.attemptRecovery()) {
+            break; // Failed to recover
+          }
         }
-        this.advance();
       }
 
-      this.tokens.push(this.createToken(TokenType.EOF, '', this.line, this.column));
-    } catch (err) {
+      this.addToken(TokenType.EOF, '');
+      this.stats.totalTime = performance.now() - this.stats.startTime;
+      
       if (this.debug) {
-        console.error('Lexer error:', err);
-        console.log('Position:', this.position, 'Character:', this.current());
-        console.log('Context:', this.input.slice(Math.max(0, this.position - 20), this.position + 20));
+        this.debugTokens();
+        this.printStats();
       }
+      
+    } catch (err) {
+      this.handleCriticalError(err);
       throw err;
     }
 
-    if (this.debug) this.debugTokens();
     return this.tokens;
   }
 
-  // Main tokenization dispatcher
-  tokenizeNext() {
-    const startLine = this.line;
-    const startColumn = this.column;
+  reset() {
+    this.tokens = [];
+    this.errors = [];
+    this.warnings = [];
+    this.position = 0;
+    this.line = 1;
+    this.column = 1;
+    this.state = LexerState.TEXT;
+    this.stateStack = [];
+    this.stats.tokensProcessed = 0;
+    this.lastRecoveryPosition = -1;
+    this.recoveryAttempts = 0;
+  }
+
+  // === State Machine Core ===
+  
+  processCurrentState() {
+    this.markTokenStart();
+    
+    switch (this.state) {
+      case LexerState.TEXT:
+        return this.processTextState();
+      case LexerState.TAG:
+        return this.processTagState();
+      case LexerState.TAG_NAME:
+        return this.processTagNameState();
+      case LexerState.ATTRIBUTES:
+        return this.processAttributesState();
+      case LexerState.ATTRIBUTE_NAME:
+        return this.processAttributeNameState();
+      case LexerState.ATTRIBUTE_VALUE:
+        return this.processAttributeValueState();
+      case LexerState.EXPRESSION:
+        return this.processExpressionState();
+      case LexerState.STRING:
+        return this.processStringState();
+      case LexerState.COMMENT:
+        return this.processCommentState();
+      case LexerState.ERROR_RECOVERY:
+        return this.processErrorRecoveryState();
+      default:
+        this.error(`Unknown lexer state: ${this.state}`);
+        return false;
+    }
+  }
+
+  processTextState() {
+    this.skipWhitespace();
+    
     const char = this.current();
-
-    // Skip whitespace
-    if (this.isWhitespace(char)) {
-      this.skipWhitespace();
-      return true;
-    }
-
-    // Skip comments
-    if (this.isCommentStart()) {
-      this.skipComment();
-      return true;
-    }
-
-    // Handle tags
+    if (!char) return true; // EOF
+    
     if (char === '<') {
-      this.tokenizeTag(startLine, startColumn);
-      return true;
+      if (this.isCommentStart()) {
+        this.setState(LexerState.COMMENT);
+        return true;
+      } else {
+        this.setState(LexerState.TAG);
+        return true;
+      }
     }
-
-    // Handle interpolation/expressions
+    
     if (char === '{') {
-      this.tokenizeInterpolation(startLine, startColumn);
+      this.setState(LexerState.EXPRESSION);
       return true;
     }
+    
+    // Read text content
+    return this.readTextContent();
+  }
 
-    // Handle text content
-    if (char && char !== '<' && char !== '{') {
-      this.tokenizeText(startLine, startColumn);
+  processTagState() {
+    this.advance(); // Skip '<'
+    
+    const char = this.current();
+    if (char === '/') {
+      this.advance(); // Skip '/'
+      this.tagIsClosing = true;
+    } else {
+      this.tagIsClosing = false;
+    }
+    
+    this.setState(LexerState.TAG_NAME);
+    return true;
+  }
+
+  processTagNameState() {
+    const tagName = this.readTagName();
+    if (!tagName) {
+      this.error("Expected tag name after '<'");
+      return false;
+    }
+    
+    this.currentTagName = tagName;
+    this.skipWhitespace();
+    
+    const char = this.current();
+    if (char === '>') {
+      this.finishTag(false);
+      return true;
+    } else if (char === '/' && this.peek() === '>') {
+      this.finishTag(true);
+      return true;
+    } else if (!this.tagIsClosing) {
+      this.setState(LexerState.ATTRIBUTES);
+      this.currentAttributes = [];
+      return true;
+    } else {
+      this.error("Expected '>' after closing tag name");
+      return false;
+    }
+  }
+
+  processAttributesState() {
+    this.skipWhitespace();
+    
+    const char = this.current();
+    if (!char) {
+      this.error("Unexpected EOF in attributes");
+      return false;
+    }
+    
+    if (char === '>') {
+      this.finishTag(false);
       return true;
     }
-
+    
+    if (char === '/' && this.peek() === '>') {
+      this.finishTag(true);
+      return true;
+    }
+    
+    if (char === '{') {
+      // Dynamic object spread
+      return this.readDynamicObject();
+    }
+    
+    if (ALPHA_CHARS.test(char)) {
+      this.setState(LexerState.ATTRIBUTE_NAME);
+      return true;
+    }
+    
+    this.error(`Unexpected character in attributes: '${char}'`);
     return false;
   }
 
-  // === Character Utilities ===
+  processAttributeNameState() {
+    const name = this.readAttributeName();
+    if (!name) {
+      this.error("Expected attribute name");
+      return false;
+    }
+    
+    this.currentAttributeName = name;
+    this.skipWhitespace();
+    
+    if (this.current() === '=') {
+      this.advance(); // Skip '='
+      this.skipWhitespace();
+      this.setState(LexerState.ATTRIBUTE_VALUE);
+      return true;
+    } else {
+      // Boolean attribute
+      this.addAttributeToken(TokenType.ATTRIBUTE_STATIC, {
+        type: 'static',
+        name,
+        value: true
+      });
+      this.setState(LexerState.ATTRIBUTES);
+      return true;
+    }
+  }
+
+  processAttributeValueState() {
+    const char = this.current();
+    
+    if (char === '{') {
+      return this.readDynamicAttributeValue();
+    } else if (char === '"' || char === "'") {
+      return this.readQuotedAttributeValue(char);
+    } else {
+      return this.readUnquotedAttributeValue();
+    }
+  }
+
+  processExpressionState() {
+    const result = this.readEnclosedExpression('{', '}');
+    if (!result) return false;
+    
+    const { content } = result;
+    if (!content.trim()) {
+      this.error("Empty interpolation expression");
+      return false;
+    }
+
+    const isComplex = ExpressionAnalyzer.analyzeComplexity(content);
+    const tokenType = this.phase2 && isComplex 
+      ? TokenType.EXPRESSION_COMPLEX 
+      : TokenType.INTERPOLATION;
+
+    this.addToken(tokenType, content);
+    this.setState(LexerState.TEXT);
+    return true;
+  }
+
+  processStringState() {
+    // Handled within other states
+    return true;
+  }
+
+  processCommentState() {
+    this.skipComment();
+    this.setState(LexerState.TEXT);
+    return true;
+  }
+
+  processErrorRecoveryState() {
+    // Implemented in recovery section
+    return this.recoverFromError();
+  }
+
+  // === State Management ===
+  
+  setState(newState) {
+    if (this.debug && newState !== this.state) {
+      console.log(`State: ${this.state} → ${newState} at ${this.line}:${this.column}`);
+    }
+    this.state = newState;
+  }
+
+  pushState(newState) {
+    this.stateStack.push(this.state);
+    this.setState(newState);
+  }
+
+  popState() {
+    if (this.stateStack.length > 0) {
+      this.setState(this.stateStack.pop());
+    }
+  }
+
+  // === Enhanced Character Utilities ===
+  
   current() {
     return this.position < this.length ? this.input[this.position] : '';
   }
@@ -146,337 +427,46 @@ export class FMLLexer {
     return this.current();
   }
 
+  advanceN(n) {
+    for (let i = 0; i < n && this.position < this.length; i++) {
+      this.advance();
+    }
+  }
+
+  markTokenStart() {
+    this.startPosition = this.position;
+  }
+
+  // Optimized character checks
   isWhitespace(char) {
-    return /\s/.test(char);
+    return WHITESPACE_CHARS.has(char);
   }
 
   isAlpha(char) {
-    return /[a-zA-Z]/.test(char);
+    return ALPHA_CHARS.test(char);
   }
 
   isAlphaNumeric(char) {
-    return /[a-zA-Z0-9]/.test(char);
+    return ALPHANUM_CHARS.test(char);
   }
 
   isTagNameChar(char) {
-    return /[a-zA-Z0-9\-_]/.test(char);
+    return TAG_NAME_CHARS.test(char);
   }
 
   isAttributeNameChar(char) {
-    return /[a-zA-Z0-9\-_:]/.test(char);
+    return ATTR_NAME_CHARS.test(char);
   }
 
-  // === Comment Handling ===
-  isCommentStart() {
-    return (
-      this.current() === '<' &&
-      this.peek() === '!' &&
-      this.peek(2) === '-' &&
-      this.peek(3) === '-'
-    );
-  }
-
-  skipComment() {
-    // Skip <!--
-    this.advance(); this.advance(); this.advance(); this.advance();
-
-    while (this.position < this.length - 2) {
-      if (this.current() === '-' && this.peek() === '-' && this.peek(2) === '>') {
-        // Skip -->
-        this.advance(); this.advance(); this.advance();
-        return;
-      }
-      this.advance();
-    }
-    
-    this.error("Unclosed HTML comment");
-  }
-
-  // === Tag Tokenization ===
-  tokenizeTag(startLine, startColumn) {
-    this.advance(); // Skip '<'
-
-    // Check for closing tag
-    const isClosing = this.current() === '/';
-    if (isClosing) {
-      this.advance();
-    }
-
-    // Read tag name
-    const tagName = this.readTagName();
-    if (!tagName) {
-      this.error("Expected tag name after '<'");
-    }
-
-    this.skipWhitespace();
-
-    // Read attributes (only for opening tags)
-    const attributes = isClosing ? [] : this.readAttributes();
-
-    // Check for self-closing
-    const isSelfClosing = this.current() === '/' && this.peek() === '>';
-    if (isSelfClosing) {
-      this.advance(); // Skip '/'
-    }
-
-    // Expect closing '>'
-    if (this.current() !== '>') {
-      this.error(`Expected '>' to close tag, found '${this.current()}'`);
-    }
-    this.advance(); // Skip '>'
-
-    // Determine token type
-    let tokenType;
-    if (isClosing) {
-      tokenType = TokenType.TAG_CLOSE;
-    } else if (isSelfClosing) {
-      tokenType = TokenType.TAG_SELF_CLOSE;
-    } else if (this.phase2 && BUILTIN_DIRECTIVES.has(tagName)) {
-      tokenType = TokenType.DIRECTIVE;
-    } else if (this.isComponent(tagName)) {
-      tokenType = TokenType.COMPONENT;
-    } else {
-      tokenType = TokenType.TAG_OPEN;
-    }
-
-    this.tokens.push(
-      this.createToken(tokenType, {
-        tagName,
-        attributes,
-        isClosing,
-        isSelfClosing
-      }, startLine, startColumn)
-    );
-  }
-
-  readTagName() {
-    let name = '';
-    while (this.position < this.length && this.isTagNameChar(this.current())) {
-      name += this.current();
-      this.advance();
-    }
-    return name;
-  }
-
-  isComponent(tagName) {
-    return /^[A-Z][a-zA-Z0-9]*$/.test(tagName);
-  }
-
-  // === Attributes ===
-  readAttributes() {
-    const attrs = [];
-    
-    while (this.position < this.length) {
-      this.skipWhitespace();
-      
-      const char = this.current();
-      if (!char || char === '>' || char === '/') {
-        break;
-      }
-
-      try {
-        if (char === '{') {
-          // Dynamic object spread: {...props}
-          attrs.push(this.readDynamicObject());
-        } else if (this.isAlpha(char)) {
-          // Regular attribute
-          attrs.push(this.readAttribute());
-        } else {
-          // Unknown character - skip it
-          this.error(`Unexpected character in attributes: '${char}'`);
-        }
-      } catch (err) {
-        if (this.debug) {
-          console.warn('Attribute parsing error:', err.message);
-        }
-        // Try to recover by skipping to next whitespace or tag end
-        this.skipToNextAttribute();
-      }
-    }
-    
-    return attrs;
-  }
-
-  readAttribute() {
-    const startLine = this.line;
-    const startColumn = this.column;
-    
-    // Read attribute name
-    const name = this.readAttributeName();
-    if (!name) {
-      this.error("Expected attribute name");
-    }
-
-    this.skipWhitespace();
-
-    // Check for value
-    if (this.current() !== '=') {
-      // Boolean attribute
-      return this.createToken(TokenType.ATTRIBUTE_STATIC, {
-        type: 'static',
-        name,
-        value: true
-      }, startLine, startColumn);
-    }
-
-    this.advance(); // Skip '='
-    this.skipWhitespace();
-
-    // Read attribute value
-    const valueChar = this.current();
-    
-    if (valueChar === '{') {
-      // Dynamic value
-      const dynamic = this.readDynamicValue();
-      const isEvent = this.phase2 && this.isEventAttribute(name);
-
-      return this.createToken(isEvent ? TokenType.EVENT_HANDLER : TokenType.ATTRIBUTE_DYNAMIC, {
-        type: isEvent ? 'event' : 'dynamic',
-        name,
-        content: dynamic.content,
-        value: dynamic.value
-      }, startLine, startColumn);
-    } else {
-      // Static value
-      const staticValue = this.readAttributeValue();
-      return this.createToken(TokenType.ATTRIBUTE_STATIC, {
-        type: 'static',
-        name,
-        value: staticValue
-      }, startLine, startColumn);
-    }
-  }
-
-  readAttributeName() {
-    let name = '';
-    while (this.position < this.length && this.isAttributeNameChar(this.current())) {
-      name += this.current();
-      this.advance();
-    }
-    return name;
-  }
-
-  isEventAttribute(name) {
-    return EVENT_ATTRIBUTES.has(name) || EVENT_PREFIX.test(name);
-  }
-
-  readAttributeValue() {
-    const char = this.current();
-    
-    if (char === '"' || char === "'") {
-      return this.readQuotedValue(char);
-    } else {
-      return this.readUnquotedValue();
-    }
-  }
-
-  readQuotedValue(quote) {
-    this.advance(); // Skip opening quote
-    
-    let value = '';
-    while (this.position < this.length) {
-      const char = this.current();
-      
-      if (char === quote) {
-        this.advance(); // Skip closing quote
-        break;
-      }
-      
-      if (char === '\\') {
-        // Handle escape sequences
-        this.advance();
-        const escaped = this.current();
-        if (escaped) {
-          value += this.getEscapedChar(escaped);
-          this.advance();
-        }
-      } else if (char === '\n') {
-        this.error("Unterminated string literal");
-      } else {
-        value += char;
-        this.advance();
-      }
-    }
-    
-    return value;
-  }
-
-  getEscapedChar(char) {
-    switch (char) {
-      case 'n': return '\n';
-      case 't': return '\t';
-      case 'r': return '\r';
-      case '\\': return '\\';
-      case '"': return '"';
-      case "'": return "'";
-      default: return char;
-    }
-  }
-
-  readUnquotedValue() {
-    let value = '';
-    while (this.position < this.length) {
-      const char = this.current();
-      if (this.isWhitespace(char) || char === '>' || char === '/' || char === '<') {
-        break;
-      }
-      value += char;
-      this.advance();
-    }
-    return value;
-  }
-
-  readDynamicValue() {
-    return this.readEnclosedExpression('{', '}');
-  }
-
-  readDynamicObject() {
-    const { content } = this.readEnclosedExpression('{', '}');
-    return this.createToken(TokenType.ATTRIBUTE_DYNAMIC, {
-      type: 'dynamic-object',
-      content
-    }, this.line, this.column);
-  }
-
-  skipToNextAttribute() {
-    while (this.position < this.length) {
-      const char = this.current();
-      if (this.isWhitespace(char) || char === '>' || char === '/') {
-        break;
-      }
+  // === Enhanced Parsing Methods ===
+  
+  skipWhitespace() {
+    while (this.position < this.length && this.isWhitespace(this.current())) {
       this.advance();
     }
   }
 
-  // === Interpolation & Expressions ===
-  tokenizeInterpolation(startLine, startColumn) {
-    const { content } = this.readEnclosedExpression('{', '}');
-    
-    if (!content.trim()) {
-      this.error("Empty interpolation expression");
-    }
-
-    const tokenType = this.phase2 && this.isComplexExpression(content)
-      ? TokenType.EXPRESSION_COMPLEX
-      : TokenType.INTERPOLATION;
-
-    this.tokens.push(this.createToken(tokenType, content, startLine, startColumn));
-  }
-
-  isComplexExpression(content) {
-    const trimmed = content.trim();
-    return (
-      /\w\s*\(/.test(trimmed) ||           // Method calls: user.getName()
-      /[+\-*/%<>=!&|]/.test(trimmed) ||    // Operators: a + b, x > y
-      /\?\s*.*\s*:/.test(trimmed) ||       // Ternary: condition ? a : b
-      /^\s*[\[{]/.test(trimmed) ||         // Literals: [1,2,3], {key: value}
-      /&&|\|\|/.test(trimmed) ||           // Logical: a && b, x || y
-      /===|!==|==|!=|<=|>=/.test(trimmed)  // Comparisons: a === b
-    );
-  }
-
-  // === Text ===
-  tokenizeText(startLine, startColumn) {
+  readTextContent() {
     let text = '';
     
     while (this.position < this.length) {
@@ -489,35 +479,90 @@ export class FMLLexer {
     }
     
     if (text.length > 0) {
-      this.tokens.push(this.createToken(TokenType.TEXT, text, startLine, startColumn));
+      this.addToken(TokenType.TEXT, text);
     }
+    
+    return true;
   }
 
-  // === General Utilities ===
-  skipWhitespace() {
-    while (this.position < this.length && this.isWhitespace(this.current())) {
+  readTagName() {
+    let name = '';
+    while (this.position < this.length && this.isTagNameChar(this.current())) {
+      name += this.current();
       this.advance();
     }
+    return name;
   }
 
-  readEnclosedExpression(open, close) {
-    if (this.current() !== open) {
-      return { content: '', line: this.line, column: this.column };
+  readAttributeName() {
+    let name = '';
+    while (this.position < this.length && this.isAttributeNameChar(this.current())) {
+      name += this.current();
+      this.advance();
+    }
+    return name;
+  }
+
+  finishTag(isSelfClosing) {
+    this.advance(); // Skip '>'
+    if (isSelfClosing) {
+      this.advance(); // Skip '/' in '/>'
     }
 
-    const startLine = this.line;
-    const startColumn = this.column;
+    const tagName = this.currentTagName;
+    let tokenType;
+    
+    if (this.tagIsClosing) {
+      tokenType = TokenType.TAG_CLOSE;
+    } else if (isSelfClosing) {
+      tokenType = TokenType.TAG_SELF_CLOSE;
+    } else if (this.phase2 && BUILTIN_DIRECTIVES.has(tagName)) {
+      tokenType = TokenType.DIRECTIVE;
+    } else if (this.isComponent(tagName)) {
+      tokenType = TokenType.COMPONENT;
+    } else {
+      tokenType = TokenType.TAG_OPEN;
+    }
+
+    this.addToken(tokenType, {
+      tagName,
+      attributes: this.currentAttributes || [],
+      isClosing: this.tagIsClosing,
+      isSelfClosing
+    });
+
+    this.setState(LexerState.TEXT);
+    this.currentTagName = null;
+    this.currentAttributes = null;
+  }
+
+  isComponent(tagName) {
+    return /^[A-Z][a-zA-Z0-9]*$/.test(tagName);
+  }
+
+  // === Enhanced Expression Parsing ===
+  
+  readEnclosedExpression(open, close) {
+    if (this.current() !== open) {
+      return null;
+    }
+
     this.advance(); // Skip opening character
 
     let depth = 1;
     let content = '';
     let inString = false;
     let stringChar = '';
+    let escaped = false;
 
     while (this.position < this.length && depth > 0) {
       const char = this.current();
 
-      if (!inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\' && inString) {
+        escaped = true;
+      } else if (!inString) {
         if (char === '"' || char === "'") {
           inString = true;
           stringChar = char;
@@ -527,7 +572,7 @@ export class FMLLexer {
           depth--;
         }
       } else {
-        if (char === stringChar && this.input[this.position - 1] !== '\\') {
+        if (char === stringChar) {
           inString = false;
           stringChar = '';
         }
@@ -542,36 +587,311 @@ export class FMLLexer {
 
     if (depth > 0) {
       this.error(`Unclosed expression: expected '${close}'`);
+      return null;
     }
 
-    return {
-      content: content.trim(),
-      line: startLine,
-      column: startColumn
-    };
+    return { content: content.trim() };
   }
 
-  // === Token & Error Management ===
-  createToken(type, value, line, column) {
-    return {
+  // === Enhanced Attribute Parsing ===
+  
+  readDynamicObject() {
+    const result = this.readEnclosedExpression('{', '}');
+    if (!result) return false;
+    
+    this.addAttributeToken(TokenType.ATTRIBUTE_DYNAMIC, {
+      type: 'dynamic-object',
+      content: result.content
+    });
+    
+    this.setState(LexerState.ATTRIBUTES);
+    return true;
+  }
+
+  readDynamicAttributeValue() {
+    const result = this.readEnclosedExpression('{', '}');
+    if (!result) return false;
+    
+    const name = this.currentAttributeName;
+    const isEvent = this.phase2 && this.isEventAttribute(name);
+    const tokenType = isEvent ? TokenType.EVENT_HANDLER : TokenType.ATTRIBUTE_DYNAMIC;
+    
+    this.addAttributeToken(tokenType, {
+      type: isEvent ? 'event' : 'dynamic',
+      name,
+      content: result.content,
+      value: result.content
+    });
+    
+    this.setState(LexerState.ATTRIBUTES);
+    return true;
+  }
+
+  readQuotedAttributeValue(quote) {
+    this.advance(); // Skip opening quote
+    
+    let value = '';
+    let escaped = false;
+    
+    while (this.position < this.length) {
+      const char = this.current();
+      
+      if (escaped) {
+        value += this.getEscapedChar(char);
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        this.advance(); // Skip closing quote
+        break;
+      } else if (char === '\n') {
+        this.error("Unterminated string literal");
+        return false;
+      } else {
+        value += char;
+      }
+      
+      this.advance();
+    }
+    
+    this.addAttributeToken(TokenType.ATTRIBUTE_STATIC, {
+      type: 'static',
+      name: this.currentAttributeName,
+      value
+    });
+    
+    this.setState(LexerState.ATTRIBUTES);
+    return true;
+  }
+
+  readUnquotedAttributeValue() {
+    let value = '';
+    
+    while (this.position < this.length) {
+      const char = this.current();
+      if (this.isWhitespace(char) || char === '>' || char === '/' || char === '<') {
+        break;
+      }
+      value += char;
+      this.advance();
+    }
+    
+    this.addAttributeToken(TokenType.ATTRIBUTE_STATIC, {
+      type: 'static',
+      name: this.currentAttributeName,
+      value
+    });
+    
+    this.setState(LexerState.ATTRIBUTES);
+    return true;
+  }
+
+  isEventAttribute(name) {
+    return EVENT_ATTRIBUTES.has(name) || EVENT_PREFIX.test(name);
+  }
+
+  // === Enhanced Escape Handling ===
+  
+  getEscapedChar(char) {
+    const escapeMap = {
+      'n': '\n',
+      't': '\t', 
+      'r': '\r',
+      'b': '\b',
+      'f': '\f',
+      'v': '\v',
+      '0': '\0',
+      '\\': '\\',
+      '"': '"',
+      "'": "'",
+      '/': '/'
+    };
+    
+    return escapeMap[char] || char;
+  }
+
+  // === Comment Handling ===
+  
+  isCommentStart() {
+    return (
+      this.current() === '<' &&
+      this.peek() === '!' &&
+      this.peek(2) === '-' &&
+      this.peek(3) === '-'
+    );
+  }
+
+  skipComment() {
+    this.advanceN(4); // Skip '<!--'
+
+    while (this.position < this.length - 2) {
+      if (this.current() === '-' && this.peek() === '-' && this.peek(2) === '>') {
+        this.advanceN(3); // Skip '-->'
+        return;
+      }
+      this.advance();
+    }
+    
+    this.error("Unclosed HTML comment");
+  }
+
+  // === Token Management ===
+  
+  addToken(type, value) {
+    const token = {
       type,
       value,
-      line,
-      column,
-      // Add source position for debugging
-      position: this.position
+      line: this.line,
+      column: this.column,
+      position: this.startPosition,
+      length: this.position - this.startPosition
     };
+    
+    this.tokens.push(token);
+    this.stats.tokensProcessed++;
+    
+    if (this.debug && this.stats.tokensProcessed % 100 === 0) {
+      console.log(`Processed ${this.stats.tokensProcessed} tokens`);
+    }
   }
 
-  error(message, line = this.line, column = this.column) {
-    const context = this.getErrorContext();
-    const fullMessage = `${message}\n${context}`;
+  addAttributeToken(type, value) {
+    if (!this.currentAttributes) {
+      this.currentAttributes = [];
+    }
     
-    const err = new SyntaxError(`Lexer error at ${line}:${column} - ${fullMessage}`);
-    err.location = { line, column, position: this.position };
-    err.context = context;
+    this.currentAttributes.push({
+      type,
+      value,
+      line: this.line,
+      column: this.column,
+      position: this.startPosition
+    });
+  }
+
+  // === Error Recovery System ===
+  
+  attemptRecovery() {
+    if (this.position === this.lastRecoveryPosition) {
+      this.recoveryAttempts++;
+      if (this.recoveryAttempts >= this.maxRecoveryAttempts) {
+        this.error("Maximum recovery attempts exceeded");
+        return false;
+      }
+    } else {
+      this.recoveryAttempts = 0;
+      this.lastRecoveryPosition = this.position;
+    }
+
+    this.stats.errorRecoveries++;
+    this.setState(LexerState.ERROR_RECOVERY);
+    return this.recoverFromError();
+  }
+
+  recoverFromError() {
+    const mode = this.selectRecoveryMode();
     
-    throw err;
+    switch (mode) {
+      case RecoveryMode.SKIP_TO_TAG:
+        return this.skipToNextTag();
+      case RecoveryMode.SKIP_TO_EXPRESSION_END:
+        return this.skipToExpressionEnd();
+      case RecoveryMode.SKIP_TO_WHITESPACE:
+        return this.skipToWhitespace();
+      case RecoveryMode.SKIP_CHAR:
+        this.advance();
+        this.setState(LexerState.TEXT);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  selectRecoveryMode() {
+    // Choose recovery strategy based on current context
+    if (this.state === LexerState.EXPRESSION) {
+      return RecoveryMode.SKIP_TO_EXPRESSION_END;
+    } else if (this.state === LexerState.TAG || this.state === LexerState.ATTRIBUTES) {
+      return RecoveryMode.SKIP_TO_TAG;
+    } else {
+      return RecoveryMode.SKIP_TO_WHITESPACE;
+    }
+  }
+
+  skipToNextTag() {
+    while (this.position < this.length) {
+      if (this.current() === '<') {
+        this.setState(LexerState.TEXT);
+        return true;
+      }
+      this.advance();
+    }
+    return false;
+  }
+
+  skipToExpressionEnd() {
+    let depth = 1;
+    while (this.position < this.length && depth > 0) {
+      const char = this.current();
+      if (char === '{') depth++;
+      else if (char === '}') depth--;
+      this.advance();
+    }
+    this.setState(LexerState.TEXT);
+    return true;
+  }
+
+  skipToWhitespace() {
+    while (this.position < this.length && !this.isWhitespace(this.current())) {
+      this.advance();
+    }
+    this.setState(LexerState.TEXT);
+    return true;
+  }
+
+  // === Error Handling ===
+  
+  error(message) {
+    const error = {
+      message,
+      line: this.line,
+      column: this.column,
+      position: this.position,
+      context: this.getErrorContext(),
+      state: this.state
+    };
+    
+    this.errors.push(error);
+    
+    if (this.debug) {
+      console.error(`[Lexer Error] ${message} at ${this.line}:${this.column}`);
+      console.error(`Context: ${error.context}`);
+    }
+    
+    if (this.errors.length >= this.maxErrors) {
+      throw new Error(`Too many lexer errors (${this.maxErrors}). Last: ${message}`);
+    }
+  }
+
+  warn(message) {
+    const warning = {
+      message,
+      line: this.line,
+      column: this.column,
+      position: this.position
+    };
+    
+    this.warnings.push(warning);
+    
+    if (this.debug) {
+      console.warn(`[Lexer Warning] ${message} at ${this.line}:${this.column}`);
+    }
+  }
+
+  handleCriticalError(err) {
+    console.error('Critical lexer error:', err);
+    console.error('Position:', this.position, 'State:', this.state);
+    console.error('Context:', this.getErrorContext());
   }
 
   getErrorContext() {
@@ -581,14 +901,26 @@ export class FMLLexer {
     const after = this.input.slice(this.position, end);
     const pointer = ' '.repeat(before.length) + '^';
     
-    return `Context: ...${before}${after}...\n         ${pointer}`;
+    return `...${before}${after}...\n${pointer}`;
+  }
+
+  // === Performance & Debugging ===
+  
+  printStats() {
+    console.log('\n=== FML Lexer Performance Stats ===');
+    console.log(`Total time: ${this.stats.totalTime.toFixed(2)}ms`);
+    console.log(`Tokens processed: ${this.stats.tokensProcessed}`);
+    console.log(`Tokens/ms: ${(this.stats.tokensProcessed / this.stats.totalTime).toFixed(2)}`);
+    console.log(`Error recoveries: ${this.stats.errorRecoveries}`);
+    console.log(`Errors: ${this.errors.length}`);
+    console.log(`Warnings: ${this.warnings.length}`);
   }
 
   debugTokens() {
-    console.log(`=== FML Lexer Tokens (Phase ${this.phase2 ? '2' : '1'}) ===`);
+    console.log(`\n=== FML Lexer Tokens (Phase ${this.phase2 ? '2' : '1'}) ===`);
     console.log(`Total tokens: ${this.tokens.length}`);
     
-    this.tokens.forEach((token, i) => {
+    this.tokens.slice(0, 50).forEach((token, i) => {
       let val;
       if (typeof token.value === 'string') {
         val = `"${token.value.length > 50 ? token.value.slice(0, 50) + '...' : token.value}"`;
@@ -601,28 +933,27 @@ export class FMLLexer {
       
       console.log(`${i.toString().padStart(3)}: ${token.type.padEnd(20)} @ ${token.line}:${token.column} → ${val}`);
     });
-  }
-
-  // === Recovery & Error Handling ===
-  recover() {
-    // Try to recover from errors by finding the next safe token
-    while (this.position < this.length) {
-      const char = this.current();
-      if (char === '<' || char === '}' || this.isWhitespace(char)) {
-        break;
-      }
-      this.advance();
+    
+    if (this.tokens.length > 50) {
+      console.log(`... and ${this.tokens.length - 50} more tokens`);
     }
   }
 
   getStats() {
     return {
+      ...this.stats,
       totalTokens: this.tokens.length,
       errors: this.errors.length,
+      warnings: this.warnings.length,
       position: this.position,
       line: this.line,
       column: this.column,
-      phase2: this.phase2
+      phase2: this.phase2,
+      currentState: this.state,
+      performance: {
+        tokensPerMs: this.stats.totalTime > 0 ? this.stats.tokensProcessed / this.stats.totalTime : 0,
+        avgTokenSize: this.input.length / this.stats.tokensProcessed
+      }
     };
   }
 }

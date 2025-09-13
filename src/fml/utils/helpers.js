@@ -1,6 +1,27 @@
 // src/fml/utils/helpers.js
 // Enhanced FML Utility Helper Functions - Performance & Memory Optimized
 
+/**
+ * Simple, safe cloning for logging/debugging purposes
+ * Does not handle Date, RegExp, circular refs — but safe for plain objects
+ */
+function tryClone(obj) {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(item => tryClone(item));
+  }
+  if (typeof obj === 'object') {
+    const cloned = {};
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        cloned[key] = tryClone(obj[key]);
+      }
+    }
+    return cloned;
+  }
+  return obj;
+}
+
 // ==============================
 // Environment Detection
 // ==============================
@@ -48,7 +69,7 @@ export class FMLDebugger {
       timestamp: Date.now(),
       level,
       message,
-      context: deepClone(context),
+      context: tryClone(context), // ✅ Fixed: no longer uses deepClone from escape.js
       stack: new Error().stack
     };
 
@@ -156,7 +177,7 @@ export class FMLProfiler {
       timestamp: now,
       elapsed: now - profile.startTime,
       memory: this.getCurrentMemory(),
-      data: deepClone(data)
+      data: tryClone(data) // ✅ Fixed: no longer uses deepClone from escape.js
     };
 
     profile.marks.push(mark);
@@ -191,7 +212,7 @@ export class FMLProfiler {
       startMemory,
       endMemory,
       memoryDelta: endMemory - startMemory,
-      context: deepClone(context),
+      context: tryClone(context), // ✅ Fixed: no longer uses deepClone from escape.js
       success: !error,
       error: error ? error.message : null
     };
@@ -230,7 +251,7 @@ export class FMLProfiler {
       startMemory,
       endMemory,
       memoryDelta: endMemory - startMemory,
-      context: deepClone(context),
+      context: tryClone(context), // ✅ Fixed: no longer uses deepClone from escape.js
       success: !error,
       error: error ? error.message : null,
       async: true
@@ -1298,7 +1319,7 @@ export function initializeDevTools() {
       },
       utils: {
         formatBytes,
-        deepClone,
+        // ❌ Removed: deepClone — to avoid dependency on escape.js
         createTimer,
         measureTime,
         measureTimeAsync,
@@ -1338,7 +1359,7 @@ export const utils = {
   generateCacheKey,
 
   // Object utilities
-  deepClone,
+  // ❌ Removed: deepClone — to avoid dependency on escape.js
   mergeObjects,
   isEmpty,
   safeGet,

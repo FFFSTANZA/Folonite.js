@@ -1,12 +1,9 @@
 // src/fml/utils/escape.js
 
-/**
- * Comprehensive HTML entity escape maps
- */
 const HTML_ESCAPE_MAP = {
   '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
+  '<': '<',
+  '>': '>',
   '"': '&quot;',
   "'": '&#x27;',
   '/': '&#x2F;',
@@ -662,13 +659,7 @@ export {
   sanitizeUrl as sanitizeURL
 };
 
-// Enhanced utility exports
-export {
-  sanitizeAttributeByType,
-  sanitizeCSSInline,
-  testXSSProtection,
-  CSP
-};
+// Enhanced utility exports — CSP already exported above, no need to re-export
 
 // Keep existing exports for compatibility
 export function isSafeString(str) {
@@ -724,7 +715,7 @@ export default {
   sanitizeCSSInline,
   escapeJavaScript,
   testXSSProtection,
-  CSP,
+  CSP, 
   sanitizeAttributeByType,
   isSafeString,
   sanitizeComponentName,
@@ -733,4 +724,4 @@ export default {
   isSafeHTML,
   renderSafeContent,
   createUrlSafeId
-};   
+};

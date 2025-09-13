@@ -198,7 +198,6 @@ export class FMLDevTools {
 
   measureComponent(component) {
     const start = performance.now();
-    // Simulate minimal render measurement
     return {
       renderTime: performance.now() - start,
       memory: this.getMemoryUsage(),
@@ -1333,8 +1332,13 @@ export {
   validateFML
 };
 
-// Re-export utilities
-export * from './utils/helpers.js';
+
+export {
+  fmlDebugger,
+  fmlProfiler,
+  healthMonitor,
+  fmlStats
+} from './utils/helpers.js';
 
 /**
  * Default export with complete API — Immutable, Lazy-loaded

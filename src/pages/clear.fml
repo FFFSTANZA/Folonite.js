@@ -1,0 +1,8 @@
+<!-- src/pages/basic.fml -->
+<div class="container" style="font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
+  
+  <!-- Header (replaced with plain HTML) -->
+  <header class="page-header" style="text-align: center; margin-bottom: 2rem; padding: 1rem; background: #f3f4f6; border-radius: 8px;">
+    <h1>Welcome to FML</h1>
+    <p>A simple, powerful template language</p>
+  </header>

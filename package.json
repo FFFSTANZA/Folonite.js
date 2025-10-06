@@ -7,10 +7,18 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "build": "node scripts/build.js",
+    "build:dev": "NODE_ENV=development node scripts/build.js --no-minify",
+    "build:prod": "NODE_ENV=production node scripts/build.js",
+    "build:analyze": "node scripts/build.js && node scripts/analyze-build.js",
+    "preview": "NODE_ENV=production node dist/server.js",
+    "clean": "node -e \"const fs=require('fs');if(fs.existsSync('dist'))fs.rmSync('dist',{recursive:true,force:true})\"",
+    "clean:cache": "node -e \"const fs=require('fs');['.cache','node_modules/.cache'].forEach(d=>{if(fs.existsSync(d))fs.rmSync(d,{recursive:true,force:true})})\"",
+    "prebuild": "npm run clean",
+    "postbuild": "node scripts/post-build.js",
     "folonite": "node scripts/cli.js",
     "marketplace": "node scripts/marketplace.js",
-    "init": "node scripts/init.cjs",
-    "build": "esbuild pages/home.js --bundle --minify --outdir=dist"
+    "init": "node scripts/init.cjs"
   },
   "keywords": [
     "SSR",
@@ -21,19 +29,29 @@
     "Full-Stack",
     "Built-in Marketplace",
     "Backend",
-    "Dynamic Routing"
+    "Dynamic Routing",
+    "FML",
+    "Template Engine"
   ],
   "author": "Folonite Labs",
   "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=7.0.0"
+  },
   "dependencies": {
     "compression": "^1.7.4",
-    "express": "^4.17.1",
-    "folonite.js": "^1.1.25"
+    "express": "^4.18.2"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0",
-    "jscodeshift": "^17.0.0",
-    "nodemon": "^2.0.7"
+    "esbuild": "^0.19.5",
+    "nodemon": "^3.0.1",
+    "jscodeshift": "^17.0.0"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.32.6",
+    "cssnano": "^6.0.1",
+    "terser": "^5.24.0"
   },
   "files": [
     "src/",
@@ -41,5 +59,13 @@
     "server.js",
     "public/",
     "templates/"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FFFSTANZA/Folonite.js"
+  },
+  "bugs": {
+    "url": "https://github.com/FFFSTANZA/Folonite.js/issues"
+  },
+  "homepage": "https://fffstanza.github.io/Folonite.js-Doc/"
 }

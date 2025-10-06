@@ -343,6 +343,8 @@ function escapeHtml(str) {
 
 // === FILE UTILITIES ===
 
+// === FILE UTILITIES ===
+
 function getFileStats(filePath) {
   try {
     const stats = fs.statSync(filePath);
@@ -358,17 +360,27 @@ function getFileStats(filePath) {
 
 function findPageFile(pageName) {
   const basePath = path.resolve('./src/pages');
-  const fmlPath = path.join(basePath, `${pageName}.fml`);
-  const jsPath = path.join(basePath, `${pageName}.js`);
+  
+  // Try multiple possible file locations
+  const possiblePaths = [
+    // Direct file with .fml extension
+    path.join(basePath, `${pageName}.fml`),
+    // Direct file with .js extension
+    path.join(basePath, `${pageName}.js`),
+    // Nested directory with index.fml
+    path.join(basePath, pageName, 'index.fml'),
+    // Nested directory with index.js
+    path.join(basePath, pageName, 'index.js')
+  ];
 
-  const fmlStats = getFileStats(fmlPath);
-  const jsStats = getFileStats(jsPath);
-
-  // FML takes precedence if it exists
-  if (fmlStats.exists) {
-    return { path: fmlPath, type: 'fml', stats: fmlStats };
-  } else if (jsStats.exists) {
-    return { path: jsPath, type: 'js', stats: jsStats };
+  // Check each path in order of precedence
+  for (const filePath of possiblePaths) {
+    const stats = getFileStats(filePath);
+    if (stats.exists) {
+      // Determine type from file extension
+      const type = filePath.endsWith('.fml') ? 'fml' : 'js';
+      return { path: filePath, type, stats };
+    }
   }
 
   return null;

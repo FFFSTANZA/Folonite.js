@@ -601,7 +601,7 @@ export async function registerComponents(debug = false, options = {}) {
 
   // === MAIN EXECUTION ===
   try {
-    console.log('🚀 Starting enhanced component registration...');
+    console.log(' Starting enhanced component registration...');
     timer.mark('Setup Complete');
 
     // Load from all configured directories
@@ -623,18 +623,18 @@ export async function registerComponents(debug = false, options = {}) {
     const duration = timer.end();
     const report = generateEnhancedReport(stats, duration);
 
-    console.log('✅ Enhanced component registration complete');
+    console.log(' Enhanced component registration complete');
     console.log(report);
 
     if (debug) {
-      console.log('📋 Registered components:', Object.keys(components));
-      console.log('📊 Performance metrics:', performanceMonitor.getAllMetrics());
+      console.log(' Registered components:', Object.keys(components));
+      console.log(' Performance metrics:', performanceMonitor.getAllMetrics());
       const slow = performanceMonitor.getSlowComponents(5);
-      if (slow.length > 0) console.warn('⚠️ Slow components:', slow);
+      if (slow.length > 0) console.warn(' Slow components:', slow);
     }
 
   } catch (error) {
-    console.error('❌ Component registration failed:', error.message);
+    console.error(' Component registration failed:', error.message);
     stats.errors++;
     throw error;
   }
@@ -693,7 +693,7 @@ function getComponentName(relativePath) {
 
 function generateEnhancedReport(stats, duration) {
   const lines = [
-    `📊 Enhanced Registration Summary (${typeof duration === 'number' ? duration.toFixed(2) : duration}ms):`,
+    ` Enhanced Registration Summary (${typeof duration === 'number' ? duration.toFixed(2) : duration}ms):`,
     `   Total Components: ${stats.total}`,
     `   JavaScript (.js): ${stats.js}`,
     `   FML Components: ${stats.fml}`,
@@ -702,7 +702,7 @@ function generateEnhancedReport(stats, duration) {
     `   Skipped: ${stats.skipped}`,
     `   Hot Reloaded: ${stats.reloaded}`
   ];
-  if (stats.errors > 0) lines.push(`⚠️  Registration completed with ${stats.errors} errors`);
+  if (stats.errors > 0) lines.push(`  Registration completed with ${stats.errors} errors`);
   if (stats.warnings > 0) lines.push(`ℹ️  ${stats.warnings} validation warnings`);
   return lines.join('\n');
 }
@@ -763,7 +763,7 @@ export function clearComponents() {
   performanceMetrics.clear();
   hotReloadManager.unwatchAll();
   versionManager.versions.clear();
-  console.log(`🧹 Cleared ${count} components and metadata`);
+  console.log(` Cleared ${count} components and metadata`);
   return count;
 }
 
@@ -773,7 +773,7 @@ export async function reloadComponent(componentName) {
 
   if (!fs.existsSync(meta.filePath)) throw new Error(`File not found: ${meta.filePath}`);
 
-  console.log(`🔄 Manually reloading: ${componentName}`);
+  console.log(` Manually reloading: ${componentName}`);
 
   try {
     const content = fs.readFileSync(meta.filePath, 'utf-8');
@@ -792,10 +792,10 @@ export async function reloadComponent(componentName) {
     }
 
     versionManager.setVersion(componentName, version);
-    console.log(`✅ Component "${componentName}" reloaded successfully`);
+    console.log(` Component "${componentName}" reloaded successfully`);
     return true;
   } catch (error) {
-    console.error(`❌ Failed to reload "${componentName}":`, error.message);
+    console.error(` Failed to reload "${componentName}":`, error.message);
     throw error;
   }
 }
@@ -900,7 +900,7 @@ export async function validateAllComponents(options = {}) {
     components: {}
   };
 
-  console.log('🔍 Starting comprehensive component validation...');
+  console.log(' Starting comprehensive component validation...');
 
   for (const [name, component] of Object.entries(components)) {
     const meta = componentMetadata.get(name);
@@ -944,7 +944,7 @@ export async function validateAllComponents(options = {}) {
     }
   }
 
-  console.log(`\n📋 Validation Complete:`);
+  console.log(`\n Validation Complete:`);
   console.log(`   Total: ${results.total} components`);
   console.log(`   Passed: ${results.passed} (${((results.passed / results.total) * 100).toFixed(1)}%)`);
   console.log(`   Warnings: ${results.warnings}`);
@@ -1047,10 +1047,10 @@ export function exportComponentRegistry(format = 'json') {
 
 // === CLEANUP AND SHUTDOWN ===
 export function shutdown() {
-  console.log('🛑 Shutting down component registry...');
+  console.log(' Shutting down component registry...');
   hotReloadManager.unwatchAll();
   clearComponents();
-  console.log('✅ Component registry shutdown complete');
+  console.log(' Component registry shutdown complete');
 }
 
 // Auto-cleanup on exit

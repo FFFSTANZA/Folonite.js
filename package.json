@@ -1,6 +1,6 @@
 {
   "name": "folonite.js",
-  "version": "2.1.0",
+  "version": "1.0.0",
   "description": "Folonite.js - The first lightweight framework that integrates dynamic server-side rendering (SSR), streaming capabilities, and an external component marketplace.",
   "type": "module",
   "main": "server.js",

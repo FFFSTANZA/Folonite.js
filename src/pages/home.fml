@@ -1,0 +1,49 @@
+<!-- src/pages/landing.fml -->
+<div class="landing-page">
+  
+  <!-- Hero Section -->
+  <Hero 
+    title="Build Amazing Things" 
+    subtitle="Create beautiful, fast, and secure web applications with our modern framework"
+    primaryButton="Get Started"
+    secondaryButton="Learn More"
+  />
+
+  <!-- Features Section -->
+  <section class="features-section">
+    <div class="container">
+      <h2 class="section-title">Why Choose Us?</h2>
+      <p class="section-subtitle">Everything you need to build modern web applications</p>
+      
+      <div class="features-grid">
+        <FeatureCard 
+          icon="rocket"
+          title="Lightning Fast"
+          description="Optimized for performance with minimal overhead and blazing fast load times"
+        />
+        
+        <FeatureCard 
+          icon="shield"
+          title="Secure by Default"
+          description="Built with security best practices and automatic protection against common vulnerabilities"
+        />
+        
+        <FeatureCard 
+          icon="zap"
+          title="Easy to Use"
+          description="Simple and intuitive API that gets you building quickly without the complexity"
+        />
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Section -->
+  <section class="cta-section">
+    <div class="container">
+      <h2 class="cta-title">Ready to Get Started?</h2>
+      <p class="cta-text">Join thousands of developers building amazing things</p>
+      <button class="btn btn-large btn-primary">Start Building Now</button>
+    </div>
+  </section>
+
+</div>

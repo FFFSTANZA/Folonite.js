@@ -40,7 +40,7 @@ ${c.cyan}${c.bright}
     ██║     ╚██████╔╝███████╗╚██████╔╝██║ ╚████║██║   ██║   ███████╗
     ╚═╝      ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝   ╚══════╝${c.reset}
 ${c.gray}    ┌─────────────────────────────────────────────────────────────┐${c.reset}
-${c.gray}    │${c.reset}  ${c.magenta}${c.bright}Modern JavaScript Framework${c.reset}                   ${c.dim}v3.0${c.reset}      ${c.gray}│${c.reset}
+${c.gray}    │${c.reset}  ${c.magenta}${c.bright}Modern JavaScript Framework${c.reset}                   ${c.dim}v1.0${c.reset}      ${c.gray}│${c.reset}
 ${c.gray}    └─────────────────────────────────────────────────────────────┘${c.reset}
 `;
 
